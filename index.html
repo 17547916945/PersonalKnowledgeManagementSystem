@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>智识云 - 学生知识管理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://code.iconify.design/iconify-icon/2.0.0/iconify-icon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        #knowledge-graph { height: 680px; width: 100%; }
+        .upload-area {
+            border: 2px dashed #d1d5db;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #3b82f6;
+            background-color: #f0f7ff;
+        }
+        .progress-bar {
+            height: 6px;
+            background-color: #e5e7eb;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #10b981;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-blue-50 min-h-screen flex flex-col">
+    <!-- 顶部导航区域 -->
+    <nav class="bg-white py-3 px-6 flex items-center justify-between border-b border-blue-100">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+                <iconify-icon class="text-white text-xl" icon="mdi:brain"></iconify-icon>
+            </div>
+            <h1 class="text-gray-800 font-bold text-2xl">智识云</h1>
+        </div>
+        <div class="relative w-1/3">
+            <input id="search-input" class="w-full py-2 px-4 bg-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" placeholder="搜索文档、知识点..." type="text"/>
+            <iconify-icon class="absolute right-3 top-2.5 text-gray-500" icon="mdi:magnify"></iconify-icon>
+        </div>
+        <div class="flex items-center space-x-4">
+            <div class="relative">
+                <iconify-icon class="text-gray-600 text-2xl" icon="mdi:bell-outline"></iconify-icon>
+                <div class="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></div>
+            </div>
+            <div class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center overflow-hidden">
+                
+            </div>
+            <span class="text-gray-700 font-medium">李晓明</span>
+        </div>
+    </nav>
+
+    <!-- 主内容区域 -->
+    <div class="flex flex-1">
+        <!-- 侧边导航栏 -->
+        <aside class="bg-white w-64 py-4 border-r border-blue-100">
+            <nav class="space-y-1 px-2">
+                <button class="nav-item flex items-center space-x-3 p-3 rounded-lg text-blue-600 hover:bg-blue-50 font-medium bg-blue-50" data-view="dashboard">
+                    <iconify-icon class="text-xl" icon="mdi:view-dashboard"></iconify-icon>
+                    <span>学习概览</span>
+                </button>
+                <button class="nav-item flex items-center space-x-3 p-3 rounded-lg text-gray-700 hover:bg-blue-50" data-view="documents">
+                    <iconify-icon class="text-xl" icon="mdi:file-document-multiple"></iconify-icon>
+                    <span>文档管理</span>
+                </button>
+                <button class="nav-item flex items-center space-x-3 p-3 rounded-lg text-gray-700 hover:bg-blue-50" data-view="knowledge-graph">
+                    <iconify-icon class="text-xl" icon="mdi:graph"></iconify-icon>
+                    <span>知识图谱</span>
+                </button>
+                <button class="nav-item flex items-center space-x-3 p-3 rounded-lg text-gray-700 hover:bg-blue-50" data-view="analytics">
+                    <iconify-icon class="text-xl" icon="mdi:chart-box"></iconify-icon>
+                    <span>学习分析</span>
+                </button>
+            </nav>
+        </aside>
+
+        <!-- 主内容区域 -->
+        <main class="flex-1 p-6 overflow-auto hide-scrollbar">
+            <!-- 学习概览面板 -->
+            <div class="space-y-6" id="dashboard-view">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">学习概览</h2>
+                <!-- 学习数据概览 -->
+                <div class="grid grid-cols-4 gap-6" id="dashboard-stats">
+                    <!-- 数据将通过JavaScript动态加载 -->
+                </div>
+                
+                <!-- 近期上传 -->
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100 mt-6">
+                    <h3 class="text-xl font-bold text-gray-800 mb-4">近期上传文档</h3>
+                    <div class="grid grid-cols-4 gap-4" id="recent-documents">
+                        <!-- 文档将通过JavaScript动态加载 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 文档管理面板 -->
+            <div class="hidden space-y-6" id="documents-view">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-gray-800">文档管理</h2>
+                    <div class="flex space-x-3">
+                        <button id="upload-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg flex items-center">
+                            <iconify-icon class="mr-2" icon="mdi:plus"></iconify-icon>
+                            添加文档
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 上传区域 -->
+                <div id="upload-section" class="hidden">
+                    <div class="bg-white rounded-xl shadow p-6 border border-blue-100 mb-6">
+                        <h3 class="text-lg font-bold text-gray-800 mb-4">上传新文档</h3>
+                        
+                        <!-- 拖拽上传区域 -->
+                        <div id="upload-area" class="upload-area rounded-lg p-8 text-center cursor-pointer mb-4">
+                            <input type="file" id="file-upload" class="hidden" accept=".txt,.md,.pdf,.docx,.doc" multiple>
+                            <iconify-icon class="text-4xl text-gray-400 mb-3" icon="mdi:cloud-upload"></iconify-icon>
+                            <p class="text-gray-600 mb-1">点击选择文件或拖拽文件到此处</p>
+                            <p class="text-sm text-gray-500">支持格式: TXT, MD, PDF, DOCX, DOC</p>
+                            <p class="text-sm text-gray-500">单个文件最大16MB</p>
+                        </div>
+                        
+                        <!-- 上传进度 -->
+                        <div id="upload-progress" class="hidden">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span>上传进度</span>
+                                <span id="progress-text">0%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 上传文件列表 -->
+                        <div id="file-list" class="mt-4 space-y-2"></div>
+                        
+                        <!-- 操作按钮 -->
+                        <div class="flex justify-end space-x-3 mt-4">
+                            <button id="cancel-upload" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                取消
+                            </button>
+                            <button id="start-upload" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                开始上传
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 文档列表 -->
+                <div class="grid grid-cols-4 gap-6" id="documents-list">
+                    <!-- 文档将通过JavaScript动态加载 -->
+                </div>
+            </div>
+
+            <!-- 知识图谱面板 -->
+            <div class="hidden" id="knowledge-graph-view">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-gray-800">知识图谱</h2>
+                    <div class="flex space-x-3">
+                        <input id="kg-search-input" class="bg-gray-100 py-2 px-4 rounded-lg" placeholder="搜索知识点..." type="text">
+                        <button id="kg-search-btn" class="flex items-center bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg">
+                            <iconify-icon class="mr-2" icon="mdi:magnify"></iconify-icon>
+                            <span>搜索</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex gap-6">
+                        <!-- 图谱区域 -->
+                        <div class="flex-1">
+                            <div class="bg-gray-50 rounded-lg border border-gray-200" id="knowledge-graph">
+                                <!-- ECharts图表将在此渲染 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // API基础URL
+        const API_BASE = '/api';
+
+        // 视图切换功能
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化各视图数据
+            initializeDashboard();
+            initializeDocuments();
+            initializeKnowledgeGraph();
+            
+            // 切换视图
+            const navItems = document.querySelectorAll('.nav-item');
+            const views = document.querySelectorAll('main > div');
+            
+            navItems.forEach(item => {
+                item.addEventListener('click', function() {
+                    const viewId = this.getAttribute('data-view') + '-view';
+                    
+                    // 更新导航项状态
+                    navItems.forEach(nav => nav.classList.remove('bg-blue-50', 'text-blue-600', 'font-medium'));
+                    this.classList.add('bg-blue-50', 'text-blue-600', 'font-medium');
+                    
+                    // 显示对应视图
+                    views.forEach(view => view.classList.add('hidden'));
+                    document.getElementById(viewId).classList.remove('hidden');
+                });
+            });
+            
+            // 默认激活学习概览
+            document.querySelector('.nav-item[data-view="dashboard"]').click();
+            
+            // 搜索功能
+            document.getElementById('search-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchDocuments(this.value);
+                }
+            });
+            
+            // 文件上传功能
+            document.getElementById('upload-btn').addEventListener('click', function() {
+                toggleUploadSection();
+            });
+            
+            // 上传区域点击事件
+            document.getElementById('upload-area').addEventListener('click', function() {
+                document.getElementById('file-upload').click();
+            });
+            
+            // 文件选择变化
+            document.getElementById('file-upload').addEventListener('change', function(e) {
+                handleFileSelection(e.target.files);
+            });
+            
+            // 拖拽上传功能
+            setupDragAndDrop();
+            
+            // 开始上传按钮
+            document.getElementById('start-upload').addEventListener('click', function() {
+                startUpload();
+            });
+            
+            // 取消上传按钮
+            document.getElementById('cancel-upload').addEventListener('click', function() {
+                cancelUpload();
+            });
+            
+            // 知识图谱搜索
+            document.getElementById('kg-search-btn').addEventListener('click', function() {
+                const query = document.getElementById('kg-search-input').value;
+                searchKnowledgeGraph(query);
+            });
+        });
+
+        // 切换上传区域显示
+        function toggleUploadSection() {
+            const uploadSection = document.getElementById('upload-section');
+            if (uploadSection.classList.contains('hidden')) {
+                uploadSection.classList.remove('hidden');
+            } else {
+                uploadSection.classList.add('hidden');
+            }
+        }
+
+        // 设置拖拽上传
+        function setupDragAndDrop() {
+            const uploadArea = document.getElementById('upload-area');
+            
+            // 防止默认行为
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, preventDefaults, false);
+                document.body.addEventListener(eventName, preventDefaults, false);
+            });
+            
+            // 高亮拖拽区域
+            ['dragenter', 'dragover'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, highlight, false);
+            });
+            
+            ['dragleave', 'drop'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, unhighlight, false);
+            });
+            
+            // 处理文件拖放
+            uploadArea.addEventListener('drop', handleDrop, false);
+            
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            
+            function highlight() {
+                uploadArea.classList.add('dragover');
+            }
+            
+            function unhighlight() {
+                uploadArea.classList.remove('dragover');
+            }
+            
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                handleFileSelection(files);
+            }
+        }
+
+        // 处理文件选择
+        function handleFileSelection(files) {
+            const fileList = document.getElementById('file-list');
+            fileList.innerHTML = '';
+            
+            if (files.length === 0) return;
+            
+            // 显示上传进度
+            document.getElementById('upload-progress').classList.remove('hidden');
+            
+            // 添加文件到列表
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const fileItem = document.createElement('div');
+                fileItem.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg';
+                fileItem.innerHTML = `
+                    <div class="flex items-center">
+                        <iconify-icon class="text-gray-500 mr-3" icon="mdi:file-document"></iconify-icon>
+                        <div>
+                            <p class="font-medium">${file.name}</p>
+                            <p class="text-sm text-gray-500">${(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                        </div>
+                    </div>
+                    <span class="text-green-500 text-sm">等待上传</span>
+                `;
+                fileList.appendChild(fileItem);
+            }
+        }
+
+        // 开始上传
+        async function startUpload() {
+            const fileInput = document.getElementById('file-upload');
+            const files = fileInput.files;
+            
+            if (files.length === 0) {
+                alert('请先选择要上传的文件');
+                return;
+            }
+            
+            // 禁用按钮
+            document.getElementById('start-upload').disabled = true;
+            document.getElementById('cancel-upload').disabled = true;
+            
+            // 显示进度条
+            const progressFill = document.getElementById('progress-fill');
+            const progressText = document.getElementById('progress-text');
+            
+            let uploadedCount = 0;
+            const totalFiles = files.length;
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    const response = await fetch(`${API_BASE}/documents`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        uploadedCount++;
+                        // 更新进度
+                        const progress = Math.round((uploadedCount / totalFiles) * 100);
+                        progressFill.style.width = `${progress}%`;
+                        progressText.textContent = `${progress}%`;
+                        
+                        // 更新文件状态
+                        const fileItems = document.querySelectorAll('#file-list > div');
+                        if (fileItems[i]) {
+                            const statusSpan = fileItems[i].querySelector('span');
+                            statusSpan.textContent = '上传成功';
+                            statusSpan.className = 'text-green-500 text-sm';
+                        }
+                    } else {
+                        // 标记上传失败
+                        const fileItems = document.querySelectorAll('#file-list > div');
+                        if (fileItems[i]) {
+                            const statusSpan = fileItems[i].querySelector('span');
+                            statusSpan.textContent = '上传失败: ' + result.message;
+                            statusSpan.className = 'text-red-500 text-sm';
+                        }
+                    }
+                } catch (error) {
+                    console.error('上传文件失败:', error);
+                    const fileItems = document.querySelectorAll('#file-list > div');
+                    if (fileItems[i]) {
+                        const statusSpan = fileItems[i].querySelector('span');
+                        statusSpan.textContent = '上传失败';
+                        statusSpan.className = 'text-red-500 text-sm';
+                    }
+                }
+            }
+            
+            // 重新启用按钮
+            document.getElementById('start-upload').disabled = false;
+            document.getElementById('cancel-upload').disabled = false;
+            
+            // 上传完成后刷新文档列表
+            if (uploadedCount > 0) {
+                setTimeout(() => {
+                    initializeDocuments();
+                    initializeDashboard();
+                    alert(`成功上传 ${uploadedCount} 个文件`);
+                }, 500);
+            }
+        }
+
+        // 取消上传
+        function cancelUpload() {
+            document.getElementById('file-upload').value = '';
+            document.getElementById('file-list').innerHTML = '';
+            document.getElementById('upload-progress').classList.add('hidden');
+            document.getElementById('progress-fill').style.width = '0%';
+            document.getElementById('progress-text').textContent = '0%';
+        }
+
+        // 初始化仪表板
+        async function initializeDashboard() {
+            try {
+                // 获取文档列表用于显示最近上传
+                const response = await fetch(`${API_BASE}/documents?limit=4`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderRecentDocuments(result.data);
+                    updateDashboardStats(result.data);
+                }
+            } catch (error) {
+                console.error('初始化仪表板失败:', error);
+            }
+        }
+
+        // 初始化文档管理
+        async function initializeDocuments() {
+            try {
+                const response = await fetch(`${API_BASE}/documents`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderDocumentsList(result.data);
+                }
+            } catch (error) {
+                console.error('初始化文档列表失败:', error);
+            }
+        }
+
+        // 初始化知识图谱
+        async function initializeKnowledgeGraph() {
+            try {
+                const response = await fetch(`${API_BASE}/knowledge-graph`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderKnowledgeGraph(result.data);
+                }
+            } catch (error) {
+                console.error('初始化知识图谱失败:', error);
+            }
+        }
+
+        // 渲染最近上传的文档
+        function renderRecentDocuments(documents) {
+            const container = document.getElementById('recent-documents');
+            container.innerHTML = '';
+            
+            documents.slice(0, 4).forEach(doc => {
+                const docElement = createDocumentCard(doc, true);
+                container.appendChild(docElement);
+            });
+        }
+
+        // 渲染文档列表
+        function renderDocumentsList(documents) {
+            const container = document.getElementById('documents-list');
+            container.innerHTML = '';
+            
+            documents.forEach(doc => {
+                const docElement = createDocumentCard(doc, false);
+                container.appendChild(docElement);
+            });
+        }
+
+        // 创建文档卡片
+        function createDocumentCard(doc, isCompact) {
+            const div = document.createElement('div');
+            div.className = 'bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow';
+            
+            // 根据文件类型设置不同的图标
+            const fileIcons = {
+                'pdf': 'mdi:file-pdf',
+                'docx': 'mdi:file-word',
+                'doc': 'mdi:file-word',
+                'txt': 'mdi:file-document',
+                'md': 'mdi:markdown'
+            };
+            
+            const fileIcon = fileIcons[doc.file_type] || 'mdi:file';
+            const fileSize = (doc.file_size / 1024 / 1024).toFixed(1);
+            
+            if (isCompact) {
+                div.innerHTML = `
+                    <div class="w-full h-32 bg-blue-50 flex items-center justify-center">
+                        <iconify-icon class="text-4xl text-blue-600" icon="${fileIcon}"></iconify-icon>
+                    </div>
+                    <div class="p-3">
+                        <h4 class="font-medium mb-1 truncate">${doc.title}</h4>
+                        <p class="text-sm text-gray-500 mb-2">${doc.file_type.toUpperCase()} 文件</p>
+                        <div class="flex justify-between text-xs">
+                            <span class="text-gray-500">${fileSize}MB</span>
+                            <span>${new Date(doc.created_at).toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                div.innerHTML = `
+                    <div class="w-full h-40 bg-blue-50 flex items-center justify-center">
+                        <iconify-icon class="text-5xl text-blue-600" icon="${fileIcon}"></iconify-icon>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-gray-800 text-lg truncate">${doc.title}</h3>
+                            <span class="text-xs bg-blue-100 text-blue-800 py-0.5 px-2 rounded-full">${doc.file_type}</span>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-4 line-clamp-2">
+                            ${doc.content ? doc.content.substring(0, 100) + '...' : '无内容预览'}
+                        </p>
+                        <div class="flex items-center justify-between mt-4">
+                            <span class="text-xs text-gray-500">${doc.file_type.toUpperCase()} · ${fileSize}MB</span>
+                            <div class="text-xs text-green-600 flex items-center">
+                                <iconify-icon class="mr-1" icon="mdi:check-circle"></iconify-icon>
+                                <span>已上传</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return div;
+        }
+
+        // 更新仪表板统计
+        function updateDashboardStats(documents) {
+            const container = document.getElementById('dashboard-stats');
+            const totalSize = documents.reduce((sum, doc) => sum + doc.file_size, 0);
+            const avgSize = totalSize / documents.length / 1024 / 1024;
+            
+            container.innerHTML = `
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">文档总数</p>
+                            <p class="text-2xl font-bold">${documents.length}</p>
+                        </div>
+                        <div class="p-2 bg-blue-50 rounded-lg">
+                            <iconify-icon class="text-blue-600 text-xl" icon="mdi:file-document-multiple"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">总存储空间</p>
+                            <p class="text-2xl font-bold">${(totalSize / 1024 / 1024).toFixed(1)}MB</p>
+                        </div>
+                        <div class="p-2 bg-green-50 rounded-lg">
+                            <iconify-icon class="text-green-500 text-xl" icon="mdi:database"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">平均文档大小</p>
+                            <p class="text-2xl font-bold">${avgSize.toFixed(1)}MB</p>
+                        </div>
+                        <div class="p-2 bg-yellow-50 rounded-lg">
+                            <iconify-icon class="text-yellow-500 text-xl" icon="mdi:chart-box"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">支持格式</p>
+                            <p class="text-2xl font-bold">5种</p>
+                        </div>
+                        <div class="p-2 bg-orange-50 rounded-lg">
+                            <iconify-icon class="text-orange-500 text-xl" icon="mdi:format-list-bulleted"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 渲染知识图谱
+        function renderKnowledgeGraph(graphData) {
+            const chart = echarts.init(document.getElementById('knowledge-graph'));
+            
+            // 转换数据格式
+            const nodes = graphData.nodes.map(node => ({
+                id: node.id,
+                name: node.name,
+                category: node.type || 'concept',
+                symbolSize: Math.max(node.name.length * 3, 20)
+            }));
+            
+            const categories = [...new Set(nodes.map(node => node.category))].map(cat => ({ name: cat }));
+            
+            const option = {
+                tooltip: {},
+                legend: [{
+                    data: categories.map(c => c.name)
+                }],
+                series: [{
+                    name: '知识图谱',
+                    type: 'graph',
+                    layout: 'force',
+                    data: nodes,
+                    links: graphData.edges,
+                    categories: categories,
+                    roam: true,
+                    label: {
+                        show: true,
+                        position: 'right',
+                        formatter: '{b}'
+                    },
+                    lineStyle: {
+                        color: 'source',
+                        curveness: 0.3
+                    },
+                    force: {
+                        repulsion: 100,
+                        edgeLength: 100
+                    }
+                }]
+            };
+            
+            chart.setOption(option);
+            
+            // 响应窗口大小变化
+            window.addEventListener('resize', function() {
+                chart.resize();
+            });
+        }
+
+        // 搜索文档
+        async function searchDocuments(query) {
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 切换到文档视图
+                    document.querySelector('.nav-item[data-view="documents"]').click();
+                    renderDocumentsList(result.data);
+                }
+            } catch (error) {
+                console.error('搜索文档失败:', error);
+            }
+        }
+
+        // 搜索知识图谱
+        async function searchKnowledgeGraph(query) {
+            try {
+                const response = await fetch(`${API_BASE}/knowledge-graph/search?q=${encodeURIComponent(query)}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderKnowledgeGraph(result.data);
+                }
+            } catch (error) {
+                console.error('搜索知识图谱失败:', error);
+            }
+        }
+    </script>
+</body>
+</html>
