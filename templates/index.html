@@ -98,17 +98,42 @@
                         <!-- 文档将通过JavaScript动态加载 -->
                     </div>
                 </div>
+
+                <!-- 推荐内容 -->
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100 mt-6">
+                    <h3 class="text-xl font-bold text-gray-800 mb-4">为您推荐</h3>
+                    <div id="recommendations-container">
+                        <!-- 推荐内容将通过JavaScript动态加载 -->
+                    </div>
+                </div>
             </div>
 
             <!-- 文档管理面板 -->
             <div class="hidden space-y-6" id="documents-view">
                 <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-2xl font-bold text-gray-800">文档管理</h2>
+                    <div class="flex items-center space-x-3">
+                        <h2 class="text-2xl font-bold text-gray-800">文档管理</h2>
+                        <span id="search-status" class="text-sm text-gray-500 hidden"></span>
+                    </div>
                     <div class="flex space-x-3">
+                        <button id="clear-search-btn" class="bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-lg flex items-center hidden">
+                            <iconify-icon class="mr-2" icon="mdi:close"></iconify-icon>
+                            清除搜索
+                        </button>
                         <button id="upload-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg flex items-center">
                             <iconify-icon class="mr-2" icon="mdi:plus"></iconify-icon>
                             添加文档
                         </button>
+                    </div>
+                </div>
+                
+                <!-- 文档分类筛选 -->
+                <div class="bg-white rounded-xl shadow p-4 border border-blue-100 mb-6">
+                    <div class="flex items-center space-x-4">
+                        <span class="text-sm font-medium text-gray-700">文档分类：</span>
+                        <div class="flex flex-wrap gap-2" id="category-filters">
+                            <!-- 分类标签将通过JavaScript动态生成 -->
+                        </div>
                     </div>
                 </div>
                 
@@ -142,7 +167,7 @@
                         
                         <!-- 操作按钮 -->
                         <div class="flex justify-end space-x-3 mt-4">
-                            <button id="cancel-upload" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                            <button id="cancel-upload" type="button" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 cursor-pointer">
                                 取消
                             </button>
                             <button id="start-upload" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
@@ -181,12 +206,65 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 学习分析面板 -->
+            <div class="hidden space-y-6" id="analytics-view">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">学习分析</h2>
+                
+                <div class="grid grid-cols-3 gap-6 mb-6">
+                    <!-- 学习时长统计 -->
+                    <div class="bg-white rounded-xl shadow p-5 border border-blue-100 col-span-2">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-bold">每周学习时长统计</h3>
+                            <div class="flex space-x-2">
+                                <button class="time-filter-btn text-xs bg-blue-100 hover:bg-blue-200 rounded px-2 py-1" data-period="week">本周</button>
+                                <button class="time-filter-btn text-xs bg-gray-100 hover:bg-gray-200 rounded px-2 py-1" data-period="month">本月</button>
+                                <button class="time-filter-btn text-xs bg-gray-100 hover:bg-gray-200 rounded px-2 py-1" data-period="quarter">本季</button>
+                            </div>
+                        </div>
+                        <div class="h-64" id="study-time-chart"></div>
+                    </div>
+                    
+                    <!-- 知识点掌握分析 -->
+                    <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                        <h3 class="text-lg font-bold mb-4">知识点掌握分布</h3>
+                        <div class="h-64" id="knowledge-level-chart"></div>
+                    </div>
+                </div>
+                
+                <!-- 进度预测和建议 -->
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold">学习进展预测</h3>
+                        <button id="refresh-prediction" class="text-blue-600 flex items-center hover:text-blue-700 text-sm">
+                            <iconify-icon class="mr-1" icon="mdi:refresh"></iconify-icon>
+                            重新生成预测
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4" id="prediction-cards">
+                        <!-- 预测数据将通过JavaScript动态加载 -->
+                    </div>
+                    <div class="mt-6">
+                        <h4 class="font-medium text-gray-800 mb-2">优化建议</h4>
+                        <ul class="space-y-2 text-sm" id="recommendations-list">
+                            <!-- 建议将通过JavaScript动态加载 -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
     <script>
         // API基础URL
         const API_BASE = '/api';
+        
+        // 搜索状态管理
+        let searchState = {
+            isSearching: false,
+            currentQuery: '',
+            searchResults: []
+        };
 
         // 视图切换功能
         document.addEventListener('DOMContentLoaded', function() {
@@ -194,6 +272,7 @@
             initializeDashboard();
             initializeDocuments();
             initializeKnowledgeGraph();
+            initializeAnalytics();
             
             // 切换视图
             const navItems = document.querySelectorAll('.nav-item');
@@ -202,6 +281,7 @@
             navItems.forEach(item => {
                 item.addEventListener('click', function() {
                     const viewId = this.getAttribute('data-view') + '-view';
+                    const viewType = this.getAttribute('data-view');
                     
                     // 更新导航项状态
                     navItems.forEach(nav => nav.classList.remove('bg-blue-50', 'text-blue-600', 'font-medium'));
@@ -209,12 +289,34 @@
                     
                     // 显示对应视图
                     views.forEach(view => view.classList.add('hidden'));
-                    document.getElementById(viewId).classList.remove('hidden');
+                    const targetView = document.getElementById(viewId);
+                    if (targetView) {
+                        targetView.classList.remove('hidden');
+                        
+                        // 根据视图类型初始化数据
+                        if (viewType === 'analytics') {
+                            initializeAnalytics();
+                        } else if (viewType === 'knowledge-graph') {
+                            initializeKnowledgeGraph();
+                        } else if (viewType === 'documents') {
+                            // 如果处于搜索状态，保持搜索结果并应用分类筛选
+                            if (searchState.isSearching && searchState.searchResults.length > 0) {
+                                applyCategoryFilter();
+                            } else {
+                                // 如果文档列表为空，重新加载；否则保持当前分类筛选
+                                if (categoryFilter.allDocuments.length === 0) {
+                                    initializeDocuments();
+                                } else {
+                                    applyCategoryFilter();
+                                }
+                            }
+                        } else if (viewType === 'dashboard') {
+                            initializeDashboard();
+                        }
+                    }
                 });
             });
             
-            // 默认激活学习概览
-            document.querySelector('.nav-item[data-view="dashboard"]').click();
             
             // 搜索功能
             document.getElementById('search-input').addEventListener('keypress', function(e) {
@@ -226,6 +328,21 @@
             // 文件上传功能
             document.getElementById('upload-btn').addEventListener('click', function() {
                 toggleUploadSection();
+            });
+            
+            // 清除搜索按钮
+            document.getElementById('clear-search-btn').addEventListener('click', function() {
+                // 清空搜索框
+                document.getElementById('search-input').value = '';
+                // 清除搜索状态
+                searchState.isSearching = false;
+                searchState.currentQuery = '';
+                searchState.searchResults = [];
+                // 隐藏搜索状态提示
+                document.getElementById('search-status').classList.add('hidden');
+                document.getElementById('clear-search-btn').classList.add('hidden');
+                // 应用当前分类筛选（显示所有文档或当前分类的文档）
+                applyCategoryFilter();
             });
             
             // 上传区域点击事件
@@ -247,14 +364,41 @@
             });
             
             // 取消上传按钮
-            document.getElementById('cancel-upload').addEventListener('click', function() {
-                cancelUpload();
-            });
+            const cancelUploadBtn = document.getElementById('cancel-upload');
+            if (cancelUploadBtn) {
+                cancelUploadBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelUpload();
+                });
+            }
             
             // 知识图谱搜索
             document.getElementById('kg-search-btn').addEventListener('click', function() {
                 const query = document.getElementById('kg-search-input').value;
                 searchKnowledgeGraph(query);
+            });
+
+            // 学习分析时间筛选
+            document.querySelectorAll('.time-filter-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    // 更新按钮状态
+                    document.querySelectorAll('.time-filter-btn').forEach(b => {
+                        b.classList.remove('bg-blue-100');
+                        b.classList.add('bg-gray-100');
+                    });
+                    this.classList.remove('bg-gray-100');
+                    this.classList.add('bg-blue-100');
+                    
+                    // 重新加载数据
+                    const period = this.getAttribute('data-period');
+                    loadStudyTimeData(period);
+                });
+            });
+
+            // 刷新预测
+            document.getElementById('refresh-prediction').addEventListener('click', function() {
+                initializeAnalytics();
             });
         });
 
@@ -424,11 +568,43 @@
 
         // 取消上传
         function cancelUpload() {
-            document.getElementById('file-upload').value = '';
-            document.getElementById('file-list').innerHTML = '';
-            document.getElementById('upload-progress').classList.add('hidden');
-            document.getElementById('progress-fill').style.width = '0%';
-            document.getElementById('progress-text').textContent = '0%';
+            // 清空文件选择
+            const fileInput = document.getElementById('file-upload');
+            if (fileInput) {
+                fileInput.value = '';
+            }
+            
+            // 清空文件列表
+            const fileList = document.getElementById('file-list');
+            if (fileList) {
+                fileList.innerHTML = '';
+            }
+            
+            // 隐藏进度条
+            const uploadProgress = document.getElementById('upload-progress');
+            if (uploadProgress) {
+                uploadProgress.classList.add('hidden');
+            }
+            
+            // 重置进度
+            const progressFill = document.getElementById('progress-fill');
+            const progressText = document.getElementById('progress-text');
+            if (progressFill) {
+                progressFill.style.width = '0%';
+            }
+            if (progressText) {
+                progressText.textContent = '0%';
+            }
+            
+            // 重新启用按钮（如果被禁用）
+            const startUploadBtn = document.getElementById('start-upload');
+            const cancelUploadBtn = document.getElementById('cancel-upload');
+            if (startUploadBtn) {
+                startUploadBtn.disabled = false;
+            }
+            if (cancelUploadBtn) {
+                cancelUploadBtn.disabled = false;
+            }
         }
 
         // 初始化仪表板
@@ -442,23 +618,245 @@
                     renderRecentDocuments(result.data);
                     updateDashboardStats(result.data);
                 }
+
+                // 加载推荐内容
+                await loadRecommendations();
             } catch (error) {
                 console.error('初始化仪表板失败:', error);
             }
         }
 
+        // 加载推荐内容
+        async function loadRecommendations() {
+            try {
+                const response = await fetch(`${API_BASE}/recommendations/1`);
+                const result = await response.json();
+                
+                if (result.success && result.data.length > 0) {
+                    renderRecommendations(result.data);
+                } else {
+                    // 如果没有推荐，显示提示
+                    document.getElementById('recommendations-container').innerHTML = 
+                        '<p class="text-gray-500 text-center py-4">暂无推荐内容，上传更多文档后系统会为您推荐相关内容</p>';
+                }
+            } catch (error) {
+                console.error('加载推荐内容失败:', error);
+                document.getElementById('recommendations-container').innerHTML = 
+                    '<p class="text-gray-500 text-center py-4">加载推荐内容失败</p>';
+            }
+        }
+
+        // 渲染推荐内容
+        function renderRecommendations(recommendations) {
+            const container = document.getElementById('recommendations-container');
+            container.innerHTML = '';
+            
+            recommendations.slice(0, 3).forEach(rec => {
+                const recCard = document.createElement('div');
+                recCard.className = 'bg-blue-50 rounded-lg p-4 mb-3 border border-blue-100';
+                recCard.innerHTML = `
+                    <div class="flex items-start justify-between">
+                        <div class="flex-1">
+                            <h4 class="font-medium text-gray-800 mb-1">${rec.recommended_document.title}</h4>
+                            <p class="text-sm text-gray-600 mb-2">${rec.reason}</p>
+                            <div class="flex items-center text-xs text-gray-500">
+                                <span>来源: ${rec.source_document.title}</span>
+                            </div>
+                        </div>
+                        <button class="ml-4 text-blue-600 hover:text-blue-700" onclick="showDocumentDetail(${rec.recommended_document.id})">
+                            <iconify-icon icon="mdi:arrow-right" class="text-xl"></iconify-icon>
+                        </button>
+                    </div>
+                `;
+                container.appendChild(recCard);
+            });
+        }
+
+        // 文档分类状态
+        let categoryFilter = {
+            currentCategory: 'all',  // 'all', 'txt', 'pdf', 'docx', 'md', 'doc'
+            allDocuments: []
+        };
+
         // 初始化文档管理
         async function initializeDocuments() {
+            // 清除搜索状态
+            searchState.isSearching = false;
+            searchState.currentQuery = '';
+            searchState.searchResults = [];
+            
+            // 隐藏搜索状态提示
+            const searchStatus = document.getElementById('search-status');
+            const clearSearchBtn = document.getElementById('clear-search-btn');
+            if (searchStatus) searchStatus.classList.add('hidden');
+            if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
+            
             try {
                 const response = await fetch(`${API_BASE}/documents`);
                 const result = await response.json();
                 
                 if (result.success) {
-                    renderDocumentsList(result.data);
+                    categoryFilter.allDocuments = result.data;
+                    renderCategoryFilters(result.data);
+                    applyCategoryFilter();
                 }
             } catch (error) {
                 console.error('初始化文档列表失败:', error);
             }
+        }
+
+        // 渲染分类筛选标签
+        function renderCategoryFilters(documents) {
+            const container = document.getElementById('category-filters');
+            if (!container) return;
+            
+            // 统计各类型的文档数量
+            const categoryCounts = {
+                'all': documents.length,
+                'txt': 0,
+                'pdf': 0,
+                'docx': 0,
+                'md': 0,
+                'doc': 0
+            };
+            
+            documents.forEach(doc => {
+                const fileType = doc.file_type ? doc.file_type.toLowerCase() : '';
+                if (categoryCounts.hasOwnProperty(fileType)) {
+                    categoryCounts[fileType]++;
+                }
+            });
+            
+            // 分类标签配置
+            const categories = [
+                { key: 'all', label: '全部', icon: 'mdi:file-multiple', color: 'blue' },
+                { key: 'txt', label: '文本文件', icon: 'mdi:file-document', color: 'green' },
+                { key: 'pdf', label: 'PDF文档', icon: 'mdi:file-pdf', color: 'red' },
+                { key: 'docx', label: 'Word文档', icon: 'mdi:file-word', color: 'blue' },
+                { key: 'doc', label: 'Word文档', icon: 'mdi:file-word', color: 'blue' },
+                { key: 'md', label: 'Markdown', icon: 'mdi:markdown', color: 'purple' }
+            ];
+            
+            container.innerHTML = categories.map(cat => {
+                const count = categoryCounts[cat.key] || 0;
+                const isActive = categoryFilter.currentCategory === cat.key;
+                
+                // 使用完整的类名，避免Tailwind动态类名问题
+                let bgColorClass, textColorClass;
+                if (isActive) {
+                    // 根据颜色设置激活状态的样式
+                    const activeColors = {
+                        'blue': 'bg-blue-600 text-white',
+                        'green': 'bg-green-600 text-white',
+                        'red': 'bg-red-600 text-white',
+                        'purple': 'bg-purple-600 text-white'
+                    };
+                    bgColorClass = activeColors[cat.color] || 'bg-blue-600 text-white';
+                    textColorClass = '';
+                } else {
+                    bgColorClass = 'bg-gray-100 text-gray-700 hover:bg-gray-200';
+                    textColorClass = '';
+                }
+                
+                return `
+                    <button class="category-filter-btn flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${bgColorClass}" 
+                            data-category="${cat.key}">
+                        <iconify-icon icon="${cat.icon}" class="text-lg"></iconify-icon>
+                        <span class="font-medium">${cat.label}</span>
+                        <span class="text-xs ${isActive ? 'bg-white bg-opacity-20' : 'bg-gray-200 bg-opacity-50'} px-2 py-0.5 rounded-full">${count}</span>
+                    </button>
+                `;
+            }).join('');
+            
+            // 绑定分类筛选事件 - 直接绑定到每个按钮
+            container.querySelectorAll('.category-filter-btn').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const category = this.getAttribute('data-category');
+                    if (category) {
+                        categoryFilter.currentCategory = category;
+                        applyCategoryFilter();
+                        updateCategoryFilterButtons();
+                    }
+                });
+            });
+        }
+
+        // 更新分类筛选按钮状态
+        function updateCategoryFilterButtons() {
+            const buttons = document.querySelectorAll('.category-filter-btn');
+            const colorMap = {
+                'all': 'blue',
+                'txt': 'green',
+                'pdf': 'red',
+                'docx': 'blue',
+                'doc': 'blue',
+                'md': 'purple'
+            };
+            
+            buttons.forEach(btn => {
+                const category = btn.getAttribute('data-category');
+                const isActive = categoryFilter.currentCategory === category;
+                const color = colorMap[category] || 'blue';
+                
+                // 移除所有颜色相关的类
+                btn.className = btn.className
+                    .replace(/bg-\w+-\d+/g, '')
+                    .replace(/text-\w+/g, '')
+                    .replace(/hover:bg-\w+-\d+/g, '')
+                    .trim();
+                
+                // 添加基础类
+                btn.className = 'category-filter-btn flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ' + btn.className;
+                
+                // 根据激活状态设置颜色
+                if (isActive) {
+                    // 激活状态：使用对应颜色的深色背景
+                    const activeClasses = {
+                        'blue': 'bg-blue-600 text-white',
+                        'green': 'bg-green-600 text-white',
+                        'red': 'bg-red-600 text-white',
+                        'purple': 'bg-purple-600 text-white'
+                    };
+                    btn.className += ' ' + (activeClasses[color] || 'bg-blue-600 text-white');
+                } else {
+                    // 非激活状态：灰色背景
+                    btn.className += ' bg-gray-100 text-gray-700 hover:bg-gray-200';
+                }
+                
+                // 更新计数标签样式
+                const countSpan = btn.querySelector('span:last-child');
+                if (countSpan) {
+                    countSpan.className = `text-xs px-2 py-0.5 rounded-full ${isActive ? 'bg-white bg-opacity-20' : 'bg-gray-200 bg-opacity-50'}`;
+                }
+            });
+        }
+
+        // 应用分类筛选
+        function applyCategoryFilter() {
+            let filteredDocs = [];
+            
+            if (categoryFilter.currentCategory === 'all') {
+                // 如果处于搜索状态，使用搜索结果；否则使用所有文档
+                if (searchState.isSearching && searchState.searchResults.length > 0) {
+                    filteredDocs = searchState.searchResults;
+                } else {
+                    filteredDocs = categoryFilter.allDocuments;
+                }
+            } else {
+                // 按类型筛选
+                const sourceDocs = searchState.isSearching && searchState.searchResults.length > 0 
+                    ? searchState.searchResults 
+                    : categoryFilter.allDocuments;
+                
+                filteredDocs = sourceDocs.filter(doc => {
+                    const fileType = doc.file_type ? doc.file_type.toLowerCase() : '';
+                    return fileType === categoryFilter.currentCategory;
+                });
+            }
+            
+            renderDocumentsList(filteredDocs);
         }
 
         // 初始化知识图谱
@@ -472,6 +870,34 @@
                 }
             } catch (error) {
                 console.error('初始化知识图谱失败:', error);
+            }
+        }
+
+        // 初始化学习分析
+        async function initializeAnalytics() {
+            try {
+                // 加载学习时长统计
+                const timeResponse = await fetch(`${API_BASE}/analytics/study-time?period=week`);
+                const timeResult = await timeResponse.json();
+                if (timeResult.success) {
+                    renderStudyTimeChart(timeResult.data);
+                }
+
+                // 加载知识点掌握分布
+                const levelResponse = await fetch(`${API_BASE}/analytics/knowledge-level`);
+                const levelResult = await levelResponse.json();
+                if (levelResult.success) {
+                    renderKnowledgeLevelChart(levelResult.data);
+                }
+
+                // 加载学习预测
+                const predictionResponse = await fetch(`${API_BASE}/analytics/prediction`);
+                const predictionResult = await predictionResponse.json();
+                if (predictionResult.success) {
+                    renderPrediction(predictionResult.data);
+                }
+            } catch (error) {
+                console.error('初始化学习分析失败:', error);
             }
         }
 
@@ -489,7 +915,20 @@
         // 渲染文档列表
         function renderDocumentsList(documents) {
             const container = document.getElementById('documents-list');
+            if (!container) return;
+            
             container.innerHTML = '';
+            
+            if (documents.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-4 text-center py-12">
+                        <iconify-icon icon="mdi:file-document-outline" class="text-6xl text-gray-300 mb-4"></iconify-icon>
+                        <p class="text-gray-500 text-lg">暂无文档</p>
+                        <p class="text-gray-400 text-sm mt-2">点击"添加文档"按钮上传您的第一个文档</p>
+                    </div>
+                `;
+                return;
+            }
             
             documents.forEach(doc => {
                 const docElement = createDocumentCard(doc, false);
@@ -500,7 +939,7 @@
         // 创建文档卡片
         function createDocumentCard(doc, isCompact) {
             const div = document.createElement('div');
-            div.className = 'bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow';
+            div.className = 'bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow relative';
             
             // 根据文件类型设置不同的图标
             const fileIcons = {
@@ -516,11 +955,11 @@
             
             if (isCompact) {
                 div.innerHTML = `
-                    <div class="w-full h-32 bg-blue-50 flex items-center justify-center">
+                    <div class="w-full h-32 bg-blue-50 flex items-center justify-center cursor-pointer" onclick="showDocumentDetail(${doc.id})">
                         <iconify-icon class="text-4xl text-blue-600" icon="${fileIcon}"></iconify-icon>
                     </div>
                     <div class="p-3">
-                        <h4 class="font-medium mb-1 truncate">${doc.title}</h4>
+                        <h4 class="font-medium mb-1 truncate cursor-pointer" onclick="showDocumentDetail(${doc.id})">${doc.title}</h4>
                         <p class="text-sm text-gray-500 mb-2">${doc.file_type.toUpperCase()} 文件</p>
                         <div class="flex justify-between text-xs">
                             <span class="text-gray-500">${fileSize}MB</span>
@@ -530,15 +969,22 @@
                 `;
             } else {
                 div.innerHTML = `
-                    <div class="w-full h-40 bg-blue-50 flex items-center justify-center">
+                    <div class="absolute top-2 right-2 z-10">
+                        <button class="delete-doc-btn bg-red-500 hover:bg-red-600 text-white rounded-full p-2 shadow-lg transition-colors" 
+                                onclick="event.stopPropagation(); deleteDocument(${doc.id}, '${doc.title.replace(/'/g, "\\'")}')" 
+                                title="删除文档">
+                            <iconify-icon icon="mdi:delete" class="text-lg"></iconify-icon>
+                        </button>
+                    </div>
+                    <div class="w-full h-40 bg-blue-50 flex items-center justify-center cursor-pointer" onclick="showDocumentDetail(${doc.id})">
                         <iconify-icon class="text-5xl text-blue-600" icon="${fileIcon}"></iconify-icon>
                     </div>
                     <div class="p-4">
                         <div class="flex justify-between items-start mb-2">
-                            <h3 class="font-bold text-gray-800 text-lg truncate">${doc.title}</h3>
-                            <span class="text-xs bg-blue-100 text-blue-800 py-0.5 px-2 rounded-full">${doc.file_type}</span>
+                            <h3 class="font-bold text-gray-800 text-lg truncate cursor-pointer flex-1" onclick="showDocumentDetail(${doc.id})">${doc.title}</h3>
+                            <span class="text-xs bg-blue-100 text-blue-800 py-0.5 px-2 rounded-full ml-2">${doc.file_type}</span>
                         </div>
-                        <p class="text-gray-600 text-sm mb-4 line-clamp-2">
+                        <p class="text-gray-600 text-sm mb-4 line-clamp-2 cursor-pointer" onclick="showDocumentDetail(${doc.id})">
                             ${doc.content ? doc.content.substring(0, 100) + '...' : '无内容预览'}
                         </p>
                         <div class="flex items-center justify-between mt-4">
@@ -553,6 +999,164 @@
             }
             
             return div;
+        }
+
+        // 删除文档
+        async function deleteDocument(docId, docTitle) {
+            if (!confirm(`确定要删除文档"${docTitle}"吗？此操作不可恢复。`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/documents/${docId}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 显示成功消息
+                    showNotification('文档删除成功', 'success');
+                    
+                    // 从当前文档列表中移除已删除的文档
+                    categoryFilter.allDocuments = categoryFilter.allDocuments.filter(doc => doc.id !== docId);
+                    if (searchState.isSearching) {
+                        searchState.searchResults = searchState.searchResults.filter(doc => doc.id !== docId);
+                    }
+                    
+                    // 更新分类筛选标签
+                    renderCategoryFilters(categoryFilter.allDocuments);
+                    
+                    // 应用当前分类筛选（保持当前筛选状态）
+                    applyCategoryFilter();
+                    
+                    // 刷新仪表板
+                    await initializeDashboard();
+                } else {
+                    showNotification('删除失败: ' + result.message, 'error');
+                }
+            } catch (error) {
+                console.error('删除文档失败:', error);
+                showNotification('删除文档失败，请稍后重试', 'error');
+            }
+        }
+
+        // 显示通知
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            const bgColor = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+            notification.className = `fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center space-x-2`;
+            notification.innerHTML = `
+                <iconify-icon icon="${type === 'success' ? 'mdi:check-circle' : type === 'error' ? 'mdi:alert-circle' : 'mdi:information'}" class="text-xl"></iconify-icon>
+                <span>${message}</span>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // 3秒后自动移除
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
+        }
+
+        // 显示文档详情
+        async function showDocumentDetail(docId) {
+            try {
+                const response = await fetch(`${API_BASE}/documents/${docId}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    const doc = result.data;
+                    showDocumentModal(doc);
+                }
+            } catch (error) {
+                console.error('获取文档详情失败:', error);
+                alert('无法加载文档详情');
+            }
+        }
+
+        // 显示文档模态框
+        function showDocumentModal(doc) {
+            // 创建模态框
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+            modal.id = 'document-modal';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center p-6 border-b">
+                        <h2 class="text-2xl font-bold text-gray-800">${doc.title}</h2>
+                        <button class="close-modal text-gray-500 hover:text-gray-700">
+                            <iconify-icon icon="mdi:close" class="text-2xl"></iconify-icon>
+                        </button>
+                    </div>
+                    <div class="p-6 overflow-y-auto flex-1">
+                        <div class="mb-4 flex flex-wrap gap-2">
+                            <span class="text-sm bg-blue-100 text-blue-800 py-1 px-3 rounded-full">${doc.file_type.toUpperCase()}</span>
+                            <span class="text-sm text-gray-600">${(doc.file_size / 1024 / 1024).toFixed(2)} MB</span>
+                            <span class="text-sm text-gray-600">${new Date(doc.created_at).toLocaleString()}</span>
+                        </div>
+                        <div class="mb-4">
+                            <h3 class="font-bold mb-2">文档内容：</h3>
+                            <div class="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto">
+                                <pre class="whitespace-pre-wrap text-sm">${doc.full_content || doc.content || '无内容'}</pre>
+                            </div>
+                        </div>
+                        ${doc.tags && Array.isArray(doc.tags) && doc.tags.length > 0 ? `
+                        <div class="mb-4">
+                            <h3 class="font-bold mb-2">关键词：</h3>
+                            <div class="flex flex-wrap gap-2">
+                                ${doc.tags.map(tag => `<span class="text-sm bg-green-100 text-green-800 py-1 px-2 rounded">${tag}</span>`).join('')}
+                            </div>
+                        </div>
+                        ` : ''}
+                    </div>
+                    <div class="p-6 border-t flex justify-end space-x-3">
+                        <button class="delete-doc-in-modal px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg" onclick="deleteDocumentFromModal(${doc.id}, '${doc.title.replace(/'/g, "\\'")}')">
+                            <iconify-icon icon="mdi:delete" class="mr-2"></iconify-icon>
+                            删除文档
+                        </button>
+                        <button class="close-modal px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                            关闭
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // 关闭模态框
+            modal.querySelectorAll('.close-modal').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const modalElement = document.getElementById('document-modal');
+                    if (modalElement) {
+                        document.body.removeChild(modalElement);
+                    }
+                });
+            });
+            
+            // 点击背景关闭
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    const modalElement = document.getElementById('document-modal');
+                    if (modalElement) {
+                        document.body.removeChild(modalElement);
+                    }
+                }
+            });
+        }
+
+        // 从模态框删除文档
+        async function deleteDocumentFromModal(docId, docTitle) {
+            // 先关闭模态框
+            const modal = document.getElementById('document-modal');
+            if (modal) {
+                document.body.removeChild(modal);
+            }
+            
+            // 调用删除函数
+            await deleteDocument(docId, docTitle);
         }
 
         // 更新仪表板统计
@@ -615,64 +1219,217 @@
             
             // 转换数据格式
             const nodes = graphData.nodes.map(node => ({
-                id: node.id,
+                id: String(node.id),
                 name: node.name,
                 category: node.type || 'concept',
-                symbolSize: Math.max(node.name.length * 3, 20)
+                symbolSize: Math.max(node.name.length * 3, 20),
+                description: node.description || '',
+                value: node.frequency || 1
             }));
             
             const categories = [...new Set(nodes.map(node => node.category))].map(cat => ({ name: cat }));
             
             const option = {
-                tooltip: {},
+                tooltip: {
+                    trigger: 'item',
+                    formatter: function(params) {
+                        if (params.dataType === 'node') {
+                            return `
+                                <div style="padding: 10px;">
+                                    <strong>${params.data.name}</strong><br/>
+                                    类型: ${params.data.category}<br/>
+                                    ${params.data.description ? '描述: ' + params.data.description : ''}
+                                </div>
+                            `;
+                        } else {
+                            return `${params.data.source} → ${params.data.target}`;
+                        }
+                    }
+                },
                 legend: [{
-                    data: categories.map(c => c.name)
+                    data: categories.map(c => c.name),
+                    selectedMode: true
                 }],
                 series: [{
                     name: '知识图谱',
                     type: 'graph',
                     layout: 'force',
                     data: nodes,
-                    links: graphData.edges,
+                    links: graphData.edges.map(edge => ({
+                        source: String(edge.source),
+                        target: String(edge.target),
+                        value: edge.weight || 1,
+                        label: {
+                            show: true,
+                            formatter: edge.type || '相关'
+                        }
+                    })),
                     categories: categories,
                     roam: true,
+                    draggable: true,
                     label: {
                         show: true,
                         position: 'right',
-                        formatter: '{b}'
+                        formatter: '{b}',
+                        fontSize: 12
                     },
                     lineStyle: {
                         color: 'source',
-                        curveness: 0.3
+                        curveness: 0.3,
+                        width: 2
+                    },
+                    emphasis: {
+                        focus: 'adjacency',
+                        lineStyle: {
+                            width: 4
+                        }
                     },
                     force: {
-                        repulsion: 100,
-                        edgeLength: 100
+                        repulsion: 200,
+                        edgeLength: 150,
+                        gravity: 0.1
                     }
                 }]
             };
             
             chart.setOption(option);
             
-            // 响应窗口大小变化
+            // 添加节点点击事件
+            chart.on('click', function(params) {
+                if (params.dataType === 'node') {
+                    showNodeDetail(params.data);
+                }
+            });
+            
             window.addEventListener('resize', function() {
                 chart.resize();
+            });
+
+        }
+
+        // 显示节点详情
+        function showNodeDetail(node) {
+            // 创建模态框显示节点详情
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center p-6 border-b">
+                        <h2 class="text-2xl font-bold text-gray-800">${node.name}</h2>
+                        <button class="close-node-modal text-gray-500 hover:text-gray-700">
+                            <iconify-icon icon="mdi:close" class="text-2xl"></iconify-icon>
+                        </button>
+                    </div>
+                    <div class="p-6 overflow-y-auto flex-1">
+                        <div class="mb-4">
+                            <span class="text-sm bg-blue-100 text-blue-800 py-1 px-3 rounded-full">${node.category}</span>
+                        </div>
+                        ${node.description ? `
+                        <div class="mb-4">
+                            <h3 class="font-bold mb-2">描述：</h3>
+                            <p class="text-gray-700">${node.description}</p>
+                        </div>
+                        ` : ''}
+                        <div class="mb-4">
+                            <h3 class="font-bold mb-2">出现频率：</h3>
+                            <p class="text-gray-700">${node.value || 1} 次</p>
+                        </div>
+                    </div>
+                    <div class="p-6 border-t flex justify-end">
+                        <button class="close-node-modal px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                            关闭
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // 关闭模态框
+            modal.querySelectorAll('.close-node-modal').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.body.removeChild(modal);
+                });
+            });
+            
+            // 点击背景关闭
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    document.body.removeChild(modal);
+                }
             });
         }
 
         // 搜索文档
         async function searchDocuments(query) {
+            const queryTrimmed = query ? query.trim() : '';
+            
+            if (!queryTrimmed) {
+                // 如果搜索为空，清除搜索状态并显示所有文档
+                searchState.isSearching = false;
+                searchState.currentQuery = '';
+                searchState.searchResults = [];
+                
+                // 如果当前在文档视图，刷新文档列表
+                const documentsView = document.getElementById('documents-view');
+                if (documentsView && !documentsView.classList.contains('hidden')) {
+                    initializeDocuments();
+                }
+                return;
+            }
+            
             try {
-                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(queryTrimmed)}`);
                 const result = await response.json();
                 
                 if (result.success) {
-                    // 切换到文档视图
-                    document.querySelector('.nav-item[data-view="documents"]').click();
-                    renderDocumentsList(result.data);
+                    // 保存搜索状态
+                    searchState.isSearching = true;
+                    searchState.currentQuery = queryTrimmed;
+                    searchState.searchResults = result.data || [];
+                    
+                    // 切换到文档视图（但不触发重新加载）
+                    const documentsNav = document.querySelector('.nav-item[data-view="documents"]');
+                    const documentsView = document.getElementById('documents-view');
+                    
+                    if (documentsNav && documentsView) {
+                        // 更新导航状态
+                        document.querySelectorAll('.nav-item').forEach(nav => {
+                            nav.classList.remove('bg-blue-50', 'text-blue-600', 'font-medium');
+                        });
+                        documentsNav.classList.add('bg-blue-50', 'text-blue-600', 'font-medium');
+                        
+                        // 显示文档视图
+                        document.querySelectorAll('main > div').forEach(view => {
+                            view.classList.add('hidden');
+                        });
+                        documentsView.classList.remove('hidden');
+                    }
+                    
+                    // 显示搜索结果（应用当前分类筛选）
+                    searchState.searchResults = result.data || [];
+                    applyCategoryFilter();
+                    
+                    if (searchState.searchResults.length > 0) {
+                        showNotification(`找到 ${result.count || searchState.searchResults.length} 个相关文档`, 'success');
+                    } else {
+                        showNotification('未找到相关文档', 'info');
+                    }
+                    
+                    // 显示搜索状态和清除按钮
+                    const searchStatus = document.getElementById('search-status');
+                    const clearSearchBtn = document.getElementById('clear-search-btn');
+                    if (searchStatus && clearSearchBtn) {
+                        searchStatus.textContent = `搜索: "${queryTrimmed}" (${searchState.searchResults.length} 个结果)`;
+                        searchStatus.classList.remove('hidden');
+                        clearSearchBtn.classList.remove('hidden');
+                    }
+                } else {
+                    showNotification('搜索失败: ' + (result.message || '未知错误'), 'error');
                 }
             } catch (error) {
                 console.error('搜索文档失败:', error);
+                showNotification('搜索失败，请稍后重试', 'error');
             }
         }
 
@@ -688,6 +1445,142 @@
             } catch (error) {
                 console.error('搜索知识图谱失败:', error);
             }
+        }
+
+        // 加载学习时长数据
+        async function loadStudyTimeData(period) {
+            try {
+                const response = await fetch(`${API_BASE}/analytics/study-time?period=${period}`);
+                const result = await response.json();
+                if (result.success) {
+                    renderStudyTimeChart(result.data);
+                }
+            } catch (error) {
+                console.error('加载学习时长数据失败:', error);
+            }
+        }
+
+        // 渲染学习时长图表
+        function renderStudyTimeChart(data) {
+            const chart = echarts.init(document.getElementById('study-time-chart'));
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'shadow'
+                    }
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    data: data.labels || ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '小时'
+                },
+                series: [{
+                    name: '学习时长',
+                    type: 'bar',
+                    barWidth: '40%',
+                    data: data.values || [1.2, 0.8, 1.8, 1.0, 1.5, 2.3, 1.4],
+                    itemStyle: {
+                        color: '#3b82f6'
+                    }
+                }]
+            };
+            chart.setOption(option);
+            
+            // 响应窗口大小变化
+            window.addEventListener('resize', function() {
+                chart.resize();
+            });
+        }
+
+        // 渲染知识点掌握分布图表
+        function renderKnowledgeLevelChart(data) {
+            const chart = echarts.init(document.getElementById('knowledge-level-chart'));
+            const option = {
+                tooltip: {
+                    trigger: 'item'
+                },
+                legend: {
+                    orient: 'vertical',
+                    left: 'left'
+                },
+                series: [{
+                    name: '掌握程度',
+                    type: 'pie',
+                    radius: '60%',
+                    data: data.levels || [
+                        { value: 35, name: '已掌握' },
+                        { value: 45, name: '学习中' },
+                        { value: 20, name: '待学习' }
+                    ],
+                    emphasis: {
+                        itemStyle: {
+                            shadowBlur: 10,
+                            shadowOffsetX: 0,
+                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                        }
+                    }
+                }]
+            };
+            chart.setOption(option);
+            
+            // 响应窗口大小变化
+            window.addEventListener('resize', function() {
+                chart.resize();
+            });
+        }
+
+        // 渲染学习预测
+        function renderPrediction(data) {
+            const container = document.getElementById('prediction-cards');
+            container.innerHTML = `
+                <div class="bg-blue-50 rounded-lg p-4">
+                    <div class="flex items-center mb-2">
+                        <p class="font-medium">当前进度</p>
+                        <span class="ml-auto text-2xl font-bold text-blue-600">${data.progress || 42}%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-blue-500 h-2 rounded-full" style="width: ${data.progress || 42}%"></div>
+                    </div>
+                </div>
+                <div class="bg-green-50 rounded-lg p-4">
+                    <div class="flex items-center mb-2">
+                        <p class="font-medium">预测完成时间</p>
+                        <span class="ml-auto text-2xl font-bold text-green-600">${data.estimated_time || '3.2周'}</span>
+                    </div>
+                    <p class="text-xs text-gray-600">基于当前学习速率预测</p>
+                </div>
+                <div class="bg-yellow-50 rounded-lg p-4">
+                    <div class="flex items-center mb-2">
+                        <p class="font-medium">建议学习时长</p>
+                        <span class="ml-auto text-2xl font-bold text-yellow-600">${data.recommended_time || '2小时/天'}</span>
+                    </div>
+                    <p class="text-xs text-gray-600">完成目标的建议节奏</p>
+                </div>
+            `;
+
+            // 渲染建议列表
+            const recommendationsList = document.getElementById('recommendations-list');
+            const recommendations = data.recommendations || [
+                '增加机器学习相关文档的学习频次',
+                '每周三晚上专注数学概念学习效率最高',
+                '建立更多神经网络与数学概念的关联'
+            ];
+            recommendationsList.innerHTML = recommendations.map(rec => `
+                <li class="flex">
+                    <iconify-icon class="text-green-500 mr-2" icon="mdi:check-circle"></iconify-icon>
+                    <span>${rec}</span>
+                </li>
+            `).join('');
         }
     </script>
 </body>

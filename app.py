@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import sqlite3
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -16,7 +17,7 @@ import hashlib
 import mimetypes
 
 # 第三方库导入
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
 from flask_cors import CORS
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -355,13 +356,19 @@ class KnowledgeGraphManager:
         nodes = []
         edges = []
         
+        # 从数据库获取节点信息（包括频率）
+        with self.db.get_connection() as conn:
+            db_nodes = conn.execute('SELECT * FROM knowledge_nodes').fetchall()
+            node_freq_map = {node['id']: node['frequency'] for node in db_nodes}
+        
         # 转换节点格式
         for node_id, node_data in self.graph.nodes(data=True):
             nodes.append({
                 'id': node_id,
                 'name': node_data.get('name', f'Node {node_id}'),
                 'type': node_data.get('node_type', 'unknown'),
-                'description': node_data.get('description', '')
+                'description': node_data.get('description', ''),
+                'frequency': node_freq_map.get(node_id, 1)
             })
         
         # 转换边格式
@@ -475,17 +482,137 @@ class DocumentManager:
             return None
     
     def search_documents(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """搜索文档"""
+        """搜索文档 - 精准搜索版本，只返回真正相关的文档"""
         with self.db.get_connection() as conn:
-            # 简单的全文搜索（实际应用中可以使用更高级的搜索技术）
-            results = conn.execute('''
-                SELECT * FROM documents 
-                WHERE (title LIKE ? OR content LIKE ?) AND is_deleted = 0
-                ORDER BY created_at DESC
-                LIMIT ?
-            ''', (f'%{query}%', f'%{query}%', limit)).fetchall()
+            query_lower = query.lower().strip()
+            if not query_lower:
+                return []
             
-            return [dict(row) for row in results]
+            # 判断搜索词类型：文件名搜索（短词、包含点号、或纯字母数字）还是内容搜索
+            is_filename_search = (
+                len(query_lower) <= 20 and  # 短词更可能是文件名
+                ('.' in query_lower or  # 包含扩展名
+                 query_lower.replace('_', '').replace('-', '').replace('.', '').isalnum())  # 纯字母数字
+            )
+            
+            # 获取所有未删除的文档
+            all_docs = conn.execute('''
+                SELECT * FROM documents 
+                WHERE is_deleted = 0
+            ''').fetchall()
+            
+            # 计算相关性分数
+            scored_docs = []
+            for doc in all_docs:
+                doc_dict = dict(doc)
+                score = 0.0
+                title = doc_dict.get('title', '').lower()
+                content = doc_dict.get('content', '').lower()
+                file_path = doc_dict.get('file_path', '')
+                filename = os.path.basename(file_path).lower() if file_path else ''
+                
+                # 优先匹配文件名和标题
+                # 1. 文件名完全匹配 - 最高优先级
+                if filename == query_lower:
+                    score += 100.0
+                # 2. 文件名开头匹配（去掉扩展名）
+                elif filename.startswith(query_lower):
+                    score += 80.0
+                # 3. 文件名包含（作为完整词）
+                elif query_lower in filename:
+                    # 检查是否是完整词匹配（前后是分隔符）
+                    pattern = r'\b' + re.escape(query_lower) + r'\b'
+                    if re.search(pattern, filename):
+                        score += 60.0
+                    else:
+                        score += 40.0
+                
+                # 4. 标题完全匹配
+                if title == query_lower:
+                    score += 90.0
+                # 5. 标题开头匹配
+                elif title.startswith(query_lower):
+                    score += 70.0
+                # 6. 标题包含（作为完整词）
+                elif query_lower in title:
+                    pattern = r'\b' + re.escape(query_lower) + r'\b'
+                    if re.search(pattern, title):
+                        score += 50.0
+                    else:
+                        score += 30.0
+                
+                # 如果是文件名搜索，只匹配文件名和标题，不匹配内容
+                if is_filename_search:
+                    # 文件名搜索模式下，内容匹配权重极低
+                    if query_lower in content and score == 0:
+                        # 只有在完全没有文件名/标题匹配时，才考虑内容
+                        # 但即使这样，也只给很低的分数
+                        count = content.count(query_lower)
+                        if count >= 3:  # 至少出现3次才考虑
+                            score += min(count * 0.5, 5.0)  # 最多5分
+                else:
+                    # 内容搜索模式：内容匹配
+                    if query_lower in content:
+                        # 计算出现次数，但要求至少出现2次
+                        count = content.count(query_lower)
+                        if count >= 2:
+                            score += min(count * 1.5, 25.0)  # 最多25分
+                    
+                    # 关键词匹配（从tags中）
+                    tags_str = doc_dict.get('tags', '')
+                    if tags_str:
+                        try:
+                            tags = json.loads(tags_str)
+                            if isinstance(tags, list):
+                                for tag in tags:
+                                    if query_lower in tag.lower():
+                                        score += 15.0
+                        except:
+                            pass
+                    
+                    # 使用TF-IDF计算相似度（如果内容足够长且不是错误信息）
+                    if len(content) > 100 and not content.startswith('[') and not content.startswith('处理错误'):
+                        try:
+                            similarity = self.ai.calculate_similarity(query, content[:2000])
+                            # 只有相似度较高时才加分
+                            if similarity > 0.3:
+                                score += similarity * 10.0  # 最多10分
+                        except:
+                            pass
+                
+                # 只添加有意义的匹配结果
+                # 文件名搜索：至少要有文件名或标题匹配
+                # 内容搜索：至少要有一定分数
+                min_score = 25.0 if is_filename_search else 15.0
+                
+                if score >= min_score:
+                    doc_dict['_search_score'] = score
+                    scored_docs.append(doc_dict)
+            
+            # 按分数降序排序，然后按创建时间降序
+            def get_timestamp(doc):
+                try:
+                    created_at = doc.get('created_at', '2000-01-01')
+                    if isinstance(created_at, str):
+                        try:
+                            if ' ' in created_at:
+                                dt = datetime.strptime(created_at.split('.')[0], '%Y-%m-%d %H:%M:%S')
+                            else:
+                                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                            return dt.timestamp()
+                        except:
+                            return 0.0
+                    return 0.0
+                except:
+                    return 0.0
+            
+            scored_docs.sort(key=lambda x: (x.get('_search_score', 0), get_timestamp(x)), reverse=True)
+            
+            # 移除临时分数字段
+            for doc in scored_docs:
+                doc.pop('_search_score', None)
+            
+            return scored_docs[:limit]
 
 # Flask应用创建函数
 def create_app():
@@ -631,13 +758,13 @@ def create_app():
                 (node.get('description') and query.lower() in node['description'].lower())
             ]
         
-            # 获取过滤后节点的ID集合
-            filtered_node_ids = {node['id'] for node in filtered_nodes}
-        
+            # 获取过滤后节点的ID集合（统一转换为字符串）
+            filtered_node_ids = {str(node['id']) for node in filtered_nodes}
+            
             # 过滤相关的边（源节点或目标节点在过滤后的节点中）
             filtered_edges = [
                 edge for edge in graph_data['edges'] 
-                if edge['source'] in filtered_node_ids or edge['target'] in filtered_node_ids
+                if str(edge['source']) in filtered_node_ids or str(edge['target']) in filtered_node_ids
             ]
         
             return jsonify({
@@ -656,6 +783,7 @@ def create_app():
                 'message': f'搜索出错: {str(e)}'
             }), 500
     
+    @app.route('/api/recommendations/<int:user_id>', defaults={'user_id': 1})
     @app.route('/api/recommendations/<int:user_id>')
     def get_recommendations(user_id):
         """获取个性化推荐"""
@@ -723,6 +851,188 @@ def create_app():
                 'database_path': Config.DATABASE_PATH
             }
         })
+    
+    @app.route('/api/analytics/study-time')
+    def get_study_time():
+        """获取学习时长统计"""
+        period = request.args.get('period', 'week')
+        
+        # 根据时间段生成模拟数据（实际应用中应从数据库查询）
+        if period == 'week':
+            labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+            # 基于文档创建时间生成学习时长
+            with db_manager.get_connection() as conn:
+                docs = conn.execute(
+                    'SELECT created_at FROM documents WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 7'
+                ).fetchall()
+                values = []
+                for i in range(7):
+                    if i < len(docs):
+                        # 根据文档数量估算学习时长（小时）
+                        values.append(round(0.5 + (len(docs) - i) * 0.3, 1))
+                    else:
+                        values.append(round(0.5 + (7 - i) * 0.2, 1))
+        elif period == 'month':
+            labels = [f'第{i}周' for i in range(1, 5)]
+            with db_manager.get_connection() as conn:
+                total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
+                avg_per_week = total_docs / 4 if total_docs > 0 else 1
+                values = [round(avg_per_week * 0.5 + i * 0.3, 1) for i in range(4)]
+        else:  # quarter
+            labels = ['第1月', '第2月', '第3月']
+            with db_manager.get_connection() as conn:
+                total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
+                avg_per_month = total_docs / 3 if total_docs > 0 else 1
+                values = [round(avg_per_month * 0.8 + i * 0.5, 1) for i in range(3)]
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'labels': labels,
+                'values': values,
+                'period': period
+            }
+        })
+    
+    @app.route('/api/analytics/knowledge-level')
+    def get_knowledge_level():
+        """获取知识点掌握分布"""
+        with db_manager.get_connection() as conn:
+            total_nodes = conn.execute('SELECT COUNT(*) FROM knowledge_nodes').fetchone()[0]
+            
+            # 简化的掌握度计算（实际应用中需要更复杂的算法）
+            if total_nodes == 0:
+                levels = [
+                    {'value': 0, 'name': '已掌握'},
+                    {'value': 0, 'name': '学习中'},
+                    {'value': 0, 'name': '待学习'}
+                ]
+            else:
+                mastered = int(total_nodes * 0.35)
+                learning = int(total_nodes * 0.45)
+                pending = total_nodes - mastered - learning
+                levels = [
+                    {'value': mastered, 'name': '已掌握'},
+                    {'value': learning, 'name': '学习中'},
+                    {'value': pending, 'name': '待学习'}
+                ]
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'levels': levels,
+                'total': total_nodes
+            }
+        })
+    
+    @app.route('/api/analytics/prediction')
+    def get_prediction():
+        """获取学习进展预测"""
+        with db_manager.get_connection() as conn:
+            total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
+            total_nodes = conn.execute('SELECT COUNT(*) FROM knowledge_nodes').fetchone()[0]
+            
+            # 简化的预测算法
+            # 假设目标：100个文档，200个知识点
+            target_docs = 100
+            target_nodes = 200
+            
+            doc_progress = min(100, int((total_docs / target_docs) * 100)) if target_docs > 0 else 0
+            node_progress = min(100, int((total_nodes / target_nodes) * 100)) if target_nodes > 0 else 0
+            overall_progress = int((doc_progress + node_progress) / 2)
+            
+            # 计算预测完成时间（基于当前进度和学习速度）
+            if overall_progress > 0:
+                remaining_progress = 100 - overall_progress
+                # 假设每天进步2%
+                estimated_days = remaining_progress / 2
+                estimated_weeks = round(estimated_days / 7, 1)
+                estimated_time = f'{estimated_weeks}周'
+            else:
+                estimated_time = '4周'
+            
+            # 生成建议
+            recommendations = []
+            if total_docs < 10:
+                recommendations.append('增加文档上传频次，建立知识库基础')
+            if total_nodes < 20:
+                recommendations.append('系统会自动从文档中提取关键词，建议上传更多相关文档')
+            if total_docs > 0 and total_nodes > 0:
+                recommendations.append('建立更多知识点之间的关联，完善知识网络')
+            if not recommendations:
+                recommendations = [
+                    '保持当前学习节奏',
+                    '定期复习已学知识点',
+                    '探索新的知识领域'
+                ]
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'progress': overall_progress,
+                'estimated_time': estimated_time,
+                'recommended_time': '2小时/天',
+                'recommendations': recommendations[:3]  # 最多3条建议
+            }
+        })
+    
+    @app.route('/api/documents/<int:doc_id>')
+    def get_document_detail(doc_id):
+        """获取文档详情"""
+        with db_manager.get_connection() as conn:
+            doc = conn.execute(
+                'SELECT * FROM documents WHERE id = ? AND is_deleted = 0',
+                (doc_id,)
+            ).fetchone()
+            
+            if not doc:
+                return jsonify({'success': False, 'message': '文档不存在'}), 404
+            
+            # 读取完整内容
+            try:
+                full_content = doc_manager.doc_processor.extract_text(doc['file_path'], doc['file_type'])
+            except:
+                full_content = doc['content']
+            
+            doc_dict = dict(doc)
+            doc_dict['full_content'] = full_content
+            
+            # 解析JSON字段
+            if doc_dict.get('tags'):
+                try:
+                    doc_dict['tags'] = json.loads(doc_dict['tags'])
+                except:
+                    doc_dict['tags'] = []
+            
+            if doc_dict.get('metadata'):
+                try:
+                    doc_dict['metadata'] = json.loads(doc_dict['metadata'])
+                except:
+                    doc_dict['metadata'] = {}
+            
+            return jsonify({
+                'success': True,
+                'data': doc_dict
+            })
+    
+    @app.route('/api/documents/<int:doc_id>', methods=['DELETE'])
+    def delete_document(doc_id):
+        """删除文档（软删除）"""
+        try:
+            with db_manager.get_connection() as conn:
+                conn.execute(
+                    'UPDATE documents SET is_deleted = 1 WHERE id = ?',
+                    (doc_id,)
+                )
+            return jsonify({
+                'success': True,
+                'message': '文档已删除'
+            })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'删除失败: {str(e)}'
+            }), 500
     
     return app
 
