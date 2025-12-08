@@ -12,7 +12,7 @@ import sqlite3
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import hashlib
 import mimetypes
 
@@ -167,9 +167,18 @@ class DatabaseManager:
                     description TEXT,
                     properties TEXT,  -- JSON格式存储属性
                     frequency INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    document_id INTEGER,  -- 关联的文档ID，确保节点来自已上传的文件
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (document_id) REFERENCES documents(id)
                 )
             ''')
+            
+            # 如果表已存在但没有document_id字段，添加该字段
+            try:
+                conn.execute('ALTER TABLE knowledge_nodes ADD COLUMN document_id INTEGER')
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略错误
+                pass
             
             # 知识边表（关系）
             conn.execute('''
@@ -300,39 +309,124 @@ class KnowledgeGraphManager:
         self._load_graph_from_db()
     
     def _load_graph_from_db(self):
-        """从数据库加载知识图谱"""
+        """从数据库加载知识图谱
+        只加载来自未删除文档的节点
+        """
         try:
             with self.db.get_connection() as conn:
-                # 加载节点
-                nodes = conn.execute('SELECT * FROM knowledge_nodes').fetchall()
+                # 只加载来自未删除文档的节点（concept类型）
+                nodes = conn.execute('''
+                    SELECT kn.* FROM knowledge_nodes kn
+                    LEFT JOIN documents d ON kn.document_id = d.id
+                    WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                    AND kn.node_type = 'concept'
+                ''').fetchall()
+                
                 for node in nodes:
+                    # sqlite3.Row不支持.get()方法，使用try-except处理可能不存在的字段
+                    try:
+                        description = node['description']
+                    except (KeyError, IndexError):
+                        description = None
+                    
+                    try:
+                        document_id = node['document_id']
+                    except (KeyError, IndexError):
+                        document_id = None
+                    
                     self.graph.add_node(node['id'], 
                                       name=node['name'], 
                                       node_type=node['node_type'],
-                                      description=node['description'])
+                                      description=description,
+                                      document_id=document_id)
+
+                # 获取有效的节点ID集合
+                valid_node_ids = {node['id'] for node in nodes}
                 
-                # 加载边
-                edges = conn.execute('SELECT * FROM knowledge_edges').fetchall()
-                for edge in edges:
-                    self.graph.add_edge(edge['source_id'], edge['target_id'],
-                                      relation_type=edge['relation_type'],
-                                      weight=edge['weight'])
+                # 只加载两个端点都在有效节点集合中的边
+                all_edges = conn.execute('SELECT * FROM knowledge_edges').fetchall()
+                for edge in all_edges:
+                    if edge['source_id'] in valid_node_ids and edge['target_id'] in valid_node_ids:
+                        self.graph.add_edge(edge['source_id'], edge['target_id'],
+                                          relation_type=edge['relation_type'],
+                                          weight=edge['weight'])
+
         except Exception as e:
             print(f"加载知识图谱时出错: {e}")
+            import traceback
+            traceback.print_exc()
     
-    def add_knowledge_node(self, name: str, node_type: str, description: str = None) -> int:
-        """添加知识节点"""
+    def add_knowledge_node(self, name: str, node_type: str, description: str = None, document_id: int = None) -> int:
+        """添加知识节点
+        参数:
+            name: 节点名称
+            node_type: 节点类型（如concept, person等）
+            description: 节点描述
+            document_id: 关联的文档ID，确保节点来自已上传的文件
+        注意: 对于concept类型的节点，确保全局唯一（相同名称只创建一个节点）
+        """
         try:
             with self.db.get_connection() as conn:
-                cursor = conn.execute(
-                    'INSERT INTO knowledge_nodes (name, node_type, description) VALUES (?, ?, ?)',
-                    (name, node_type, description)
-                )
-                node_id = cursor.lastrowid
-                self.graph.add_node(node_id, name=name, node_type=node_type, description=description)
+                # 对于concept类型，检查全局是否已存在相同名称的节点（不限制document_id）
+                if node_type == 'concept':
+                    existing_node = conn.execute(
+                        'SELECT id, frequency FROM knowledge_nodes WHERE name = ? AND node_type = ? LIMIT 1',
+                        (name, node_type)
+                    ).fetchone()
+                    
+                    if existing_node:
+                        # 如果节点已存在，增加频率并返回现有节点ID
+                        node_id = existing_node['id']
+                        new_frequency = existing_node['frequency'] + 1
+                        conn.execute(
+                            'UPDATE knowledge_nodes SET frequency = ? WHERE id = ?',
+                            (new_frequency, node_id)
+                        )
+                    else:
+                        # 创建新节点
+                        cursor = conn.execute(
+                            'INSERT INTO knowledge_nodes (name, node_type, description, document_id) VALUES (?, ?, ?, ?)',
+                            (name, node_type, description, document_id)
+                        )
+                        node_id = cursor.lastrowid
+                else:
+                    # 对于非concept类型，检查是否已存在相同名称和类型的节点（来自同一文档）
+                    existing_node = conn.execute(
+                        'SELECT id FROM knowledge_nodes WHERE name = ? AND node_type = ? AND document_id = ?',
+                        (name, node_type, document_id)
+                    ).fetchone()
+                    
+                    if existing_node:
+                        # 如果节点已存在，增加频率并返回现有节点ID
+                        conn.execute(
+                            'UPDATE knowledge_nodes SET frequency = frequency + 1 WHERE id = ?',
+                            (existing_node['id'],)
+                        )
+                        node_id = existing_node['id']
+                    else:
+                        # 创建新节点
+                        cursor = conn.execute(
+                            'INSERT INTO knowledge_nodes (name, node_type, description, document_id) VALUES (?, ?, ?, ?)',
+                            (name, node_type, description, document_id)
+                        )
+                        node_id = cursor.lastrowid
+                
+                # 更新内存中的图
+                if node_id not in self.graph:
+                    self.graph.add_node(node_id, name=name, node_type=node_type, description=description, document_id=document_id)
+                else:
+                    # 更新现有节点
+                    self.graph.nodes[node_id]['name'] = name
+                    self.graph.nodes[node_id]['node_type'] = node_type
+                    if description:
+                        self.graph.nodes[node_id]['description'] = description
+                    # 对于concept类型，不更新document_id（保持第一个文档的关联）
+                
                 return node_id
         except Exception as e:
             print(f"添加知识节点时出错: {e}")
+            import traceback
+            traceback.print_exc()
             return -1
     
     def add_knowledge_edge(self, source_id: int, target_id: int, 
@@ -352,34 +446,134 @@ class KnowledgeGraphManager:
             return -1
     
     def get_graph_data(self) -> Dict:
-        """获取图谱数据用于可视化"""
+        """获取图谱数据用于可视化
+        只返回来自已上传且未删除文件的节点
+        确保每个concept名称只出现一次（去重）
+        """
         nodes = []
         edges = []
         
-        # 从数据库获取节点信息（包括频率）
+        # 从数据库获取节点信息，按名称去重（对于concept类型）
         with self.db.get_connection() as conn:
-            db_nodes = conn.execute('SELECT * FROM knowledge_nodes').fetchall()
-            node_freq_map = {node['id']: node['frequency'] for node in db_nodes}
+            # 使用GROUP BY确保每个concept名称只出现一次，合并频率
+            db_nodes = conn.execute('''
+                SELECT 
+                    MIN(kn.id) as id,
+                    kn.name,
+                    kn.node_type,
+                    MAX(kn.description) as description,
+                    SUM(kn.frequency) as frequency,
+                    MIN(kn.document_id) as document_id
+                FROM knowledge_nodes kn
+                LEFT JOIN documents d ON kn.document_id = d.id
+                WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                AND kn.node_type = 'concept'
+                GROUP BY kn.name, kn.node_type
+            ''').fetchall()
+            
+            # 构建节点映射
+            name_to_node = {}  # 名称到节点信息的映射
+            node_id_map = {}  # 旧ID到新ID的映射（用于边的重映射）
+            
+            for node in db_nodes:
+                node_id = node['id']
+                node_name = node['name']
+                
+                # 存储节点信息
+                try:
+                    description = node['description']
+                except (KeyError, IndexError):
+                    description = None
+                
+                try:
+                    document_id = node['document_id']
+                except (KeyError, IndexError):
+                    document_id = None
+                
+                name_to_node[node_name] = {
+                    'id': node_id,
+                    'name': node_name,
+                    'type': node['node_type'],
+                    'description': description or '',
+                    'frequency': node['frequency'],
+                    'document_id': document_id
+                }
         
-        # 转换节点格式
-        for node_id, node_data in self.graph.nodes(data=True):
+        # 转换节点格式，确保每个concept名称只出现一次
+        for node_name, node_info in name_to_node.items():
             nodes.append({
-                'id': node_id,
-                'name': node_data.get('name', f'Node {node_id}'),
-                'type': node_data.get('node_type', 'unknown'),
-                'description': node_data.get('description', ''),
-                'frequency': node_freq_map.get(node_id, 1)
+                'id': node_info['id'],
+                'name': node_info['name'],
+                'type': node_info['type'],
+                'description': node_info['description'],
+                'frequency': node_info['frequency'],
+                'document_id': node_info['document_id']
             })
         
-        # 转换边格式
-        for source, target, edge_data in self.graph.edges(data=True):
-            edges.append({
-                'source': source,
-                'target': target,
-                'type': edge_data.get('relation_type', 'related'),
-                'weight': edge_data.get('weight', 1.0)
-            })
+        # 获取所有节点名称到ID的映射（用于边的重映射）
+        name_to_id_map = {node['name']: node['id'] for node in nodes}
         
+        # 获取有效的节点ID集合
+        valid_node_ids = {node['id'] for node in nodes}
+        
+        # 转换边格式，需要根据节点名称重映射边的端点
+        with self.db.get_connection() as conn:
+            # 获取所有有效的边，并获取源节点和目标节点的名称
+            all_edges_query = conn.execute('''
+                SELECT DISTINCT 
+                    ke.source_id, 
+                    ke.target_id, 
+                    ke.relation_type, 
+                    ke.weight,
+                    kn1.name as source_name,
+                    kn2.name as target_name
+                FROM knowledge_edges ke
+                INNER JOIN knowledge_nodes kn1 ON ke.source_id = kn1.id
+                INNER JOIN knowledge_nodes kn2 ON ke.target_id = kn2.id
+                LEFT JOIN documents d1 ON kn1.document_id = d1.id
+                LEFT JOIN documents d2 ON kn2.document_id = d2.id
+                WHERE kn1.node_type = 'concept' AND kn2.node_type = 'concept'
+                AND (kn1.document_id IS NULL OR d1.is_deleted = 0)
+                AND (kn2.document_id IS NULL OR d2.is_deleted = 0)
+            ''').fetchall()
+            
+            # 构建边映射，用于去重
+            edge_map = {}
+            
+            for edge in all_edges_query:
+                try:
+                    source_name = edge['source_name']
+                    target_name = edge['target_name']
+                except (KeyError, IndexError):
+                    continue
+                
+                # 如果两个节点都在有效节点集合中，添加边
+                if source_name in name_to_id_map and target_name in name_to_id_map:
+                    new_source_id = name_to_id_map[source_name]
+                    new_target_id = name_to_id_map[target_name]
+                    
+                    # 避免自环和重复边
+                    if new_source_id != new_target_id:
+                        edge_key = (new_source_id, new_target_id)
+                        if edge_key not in edge_map:
+                            try:
+                                relation_type = edge['relation_type']
+                            except (KeyError, IndexError):
+                                relation_type = 'related'
+                            
+                            try:
+                                weight = edge['weight']
+                            except (KeyError, IndexError):
+                                weight = 1.0
+                            
+                            edges.append({
+                                'source': new_source_id,
+                                'target': new_target_id,
+                                'type': relation_type,
+                                'weight': weight
+                            })
+                            edge_map[edge_key] = True
+
         return {'nodes': nodes, 'edges': edges}
 
 # 文档管理类
@@ -398,6 +592,44 @@ class DocumentManager:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
+    
+    def delete_document_by_hash(self, hash_value: str) -> bool:
+        """根据哈希值删除文档（包括文件和数据库记录）"""
+        try:
+            with self.db.get_connection() as conn:
+                # 查询要删除的文档
+                doc = conn.execute(
+                    'SELECT id, file_path FROM documents WHERE hash_value = ? AND is_deleted = 0',
+                    (hash_value,)
+                ).fetchone()
+                
+                if doc:
+                    doc_id = doc['id']
+                    file_path = doc['file_path']
+                    
+                    # 1. 删除uploads文件夹中的文件
+                    if file_path and os.path.exists(file_path):
+                        try:
+                            os.remove(file_path)
+                            print(f"已删除文件: {file_path}")
+                        except Exception as e:
+                            print(f"删除文件失败 {file_path}: {e}")
+                            # 即使文件删除失败，也继续删除数据库记录
+                    
+                    # 2. 删除数据库中的记录（包括哈希值）
+                    conn.execute(
+                        'DELETE FROM documents WHERE id = ?',
+                        (doc_id,)
+                    )
+                    
+                    print(f"已删除文档记录 ID: {doc_id}, 哈希值: {hash_value}")
+                    return True
+                else:
+                    print(f"未找到哈希值为 {hash_value} 的文档")
+                    return False
+        except Exception as e:
+            print(f"根据哈希值删除文档时出错: {e}")
+            return False
     
     def process_document(self, file_path: str, title: str = None) -> Dict[str, Any]:
         """处理文档，提取信息和知识"""
@@ -455,8 +687,13 @@ class DocumentManager:
                 }
             }
     
-    def save_document(self, doc_data: Dict[str, Any]) -> Optional[int]:
-        """保存文档到数据库"""
+    def save_document(self, doc_data: Dict[str, Any], force_replace: bool = False) -> Tuple[Optional[int], bool]:
+        """保存文档到数据库
+        参数:
+            doc_data: 文档数据
+            force_replace: 如果为True，遇到哈希值冲突时强制删除旧记录并插入新记录
+        返回: (文档ID, 是否已存在)
+        """
         try:
             with self.db.get_connection() as conn:
                 cursor = conn.execute('''
@@ -473,13 +710,56 @@ class DocumentManager:
                     json.dumps(doc_data['keywords'], ensure_ascii=False),
                     json.dumps(doc_data['metadata'], ensure_ascii=False)
                 ))
-                return cursor.lastrowid
-        except sqlite3.IntegrityError:
-            print(f"文档 {doc_data['title']} 已存在（哈希值重复）")
-            return None
+                return (cursor.lastrowid, False)  # 新文档
+        except sqlite3.IntegrityError as e:
+            # 哈希值重复
+            if force_replace:
+                # 强制替换：删除旧记录并重新插入
+                print(f"文档 {doc_data['title']} 已存在（哈希值重复），强制删除旧记录并插入新记录")
+                with self.db.get_connection() as conn:
+                    # 删除旧记录
+                    conn.execute(
+                        'DELETE FROM documents WHERE hash_value = ?',
+                        (doc_data['hash_value'],)
+                    )
+                    conn.commit()
+                    
+                    # 重新插入
+                    try:
+                        cursor = conn.execute('''
+                            INSERT INTO documents 
+                            (title, content, file_path, file_type, file_size, hash_value, tags, metadata)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            doc_data['title'],
+                            doc_data['content'],
+                            doc_data['file_path'],
+                            doc_data['file_type'],
+                            doc_data['file_size'],
+                            doc_data['hash_value'],
+                            json.dumps(doc_data['keywords'], ensure_ascii=False),
+                            json.dumps(doc_data['metadata'], ensure_ascii=False)
+                        ))
+                        return (cursor.lastrowid, False)  # 新文档
+                    except Exception as retry_error:
+                        print(f"重新插入文档时出错: {retry_error}")
+                        return (None, False)
+            else:
+                # 不强制替换：查询已存在的文档ID
+                print(f"文档 {doc_data['title']} 已存在（哈希值重复），返回已存在的文档ID")
+                with self.db.get_connection() as conn:
+                    existing_doc = conn.execute(
+                        'SELECT id FROM documents WHERE hash_value = ? AND is_deleted = 0',
+                        (doc_data['hash_value'],)
+                    ).fetchone()
+                    if existing_doc:
+                        return (existing_doc['id'], True)  # 已存在的文档
+                return (None, False)
         except Exception as e:
             print(f"保存文档时出错: {e}")
-            return None
+            import traceback
+            traceback.print_exc()
+            return (None, False)
     
     def search_documents(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         """搜索文档 - 精准搜索版本，只返回真正相关的文档"""
@@ -686,28 +966,99 @@ def create_app():
                 file_path = os.path.join(Config.UPLOAD_FOLDER, filename)
                 file.save(file_path)
                 
+                # 计算文件哈希值
+                file_hash = doc_manager.calculate_file_hash(file_path)
+                
+                # 检查数据库中是否已存在相同哈希值的文件
+                is_replacement = False
+                old_doc_id = None
+                old_file_path = None
+                old_title = None
+                
+                # 先查询是否存在相同哈希值的文件
+                with db_manager.get_connection() as conn:
+                    existing_doc = conn.execute(
+                        'SELECT id, file_path, title FROM documents WHERE hash_value = ? AND is_deleted = 0',
+                        (file_hash,)
+                    ).fetchone()
+                    
+                    if existing_doc:
+                        is_replacement = True
+                        old_doc_id = existing_doc['id']
+                        old_file_path = existing_doc['file_path']
+                        old_title = existing_doc['title']
+                
+                # 如果存在旧记录，先删除旧文件（在删除数据库记录之前）
+                if is_replacement and old_file_path and old_file_path != file_path and os.path.exists(old_file_path):
+                    try:
+                        os.remove(old_file_path)
+                        print(f"已删除旧文件: {old_file_path}")
+                    except Exception as e:
+                        print(f"删除旧文件失败 {old_file_path}: {e}")
+                
+                # 删除数据库中的旧记录（如果存在）
+                if is_replacement and old_doc_id:
+                    with db_manager.get_connection() as conn:
+                        conn.execute(
+                            'DELETE FROM documents WHERE id = ?',
+                            (old_doc_id,)
+                        )
+                        conn.commit()  # 显式提交，确保删除操作生效
+                        print(f"已删除旧文档记录 ID: {old_doc_id}，哈希值: {file_hash}，旧标题: {old_title}")
+                
                 # 处理文档
                 doc_data = doc_manager.process_document(file_path, filename)
-                if doc_data:
-                    doc_id = doc_manager.save_document(doc_data)
-                    if doc_id:
-                        # 如果处理成功，从关键词创建知识节点
-                        if doc_data['keywords'] and not doc_data['content'].startswith('['):
-                            try:
-                                for keyword in doc_data['keywords'][:5]:  # 限制前5个关键词
-                                    kg_manager.add_knowledge_node(keyword, 'concept', f'从文档"{doc_data["title"]}"提取的关键词')
-                            except Exception as e:
-                                print(f"创建知识节点时出错: {e}")
-                        
-                        return jsonify({
-                            'success': True,
-                            'message': '文档上传成功',
-                            'document_id': doc_id,
-                            'processing_status': doc_data['metadata']['processing_status'],
-                            'processing_message': doc_data['metadata']['processing_message']
-                        })
+                if not doc_data:
+                    return jsonify({'success': False, 'message': '文档处理失败：无法提取文档内容'}), 500
                 
-                return jsonify({'success': False, 'message': '文档处理失败'}), 500
+                # 确保使用计算好的哈希值
+                doc_data['hash_value'] = file_hash
+                
+                # 保存新文档（如果存在旧记录，强制替换）
+                doc_id, is_existing = doc_manager.save_document(doc_data, force_replace=is_replacement)
+                if not doc_id:
+                    # 如果保存失败，尝试强制删除并重新保存
+                    print(f"保存失败，尝试强制删除旧记录并重新保存...")
+                    with db_manager.get_connection() as conn:
+                        conn.execute(
+                            'DELETE FROM documents WHERE hash_value = ?',
+                            (file_hash,)
+                        )
+                        conn.commit()
+                    # 再次尝试保存（强制替换）
+                    doc_id, is_existing = doc_manager.save_document(doc_data, force_replace=True)
+                    
+                    if not doc_id:
+                        return jsonify({
+                            'success': False, 
+                            'message': f'文档保存失败：无法保存到数据库。请检查文件是否损坏或数据库是否正常。'
+                        }), 500
+                
+                # 从关键词创建知识节点，关联到当前文档
+                if doc_data['keywords'] and not doc_data['content'].startswith('['):
+                    try:
+                        for keyword in doc_data['keywords'][:5]:  # 限制前5个关键词
+                            kg_manager.add_knowledge_node(
+                                keyword, 
+                                'concept', 
+                                f'从文档"{doc_data["title"]}"提取的关键词',
+                                document_id=doc_id  # 关联到当前文档
+                            )
+                    except Exception as e:
+                        print(f"创建知识节点时出错: {e}")
+                
+                # 根据是否替换旧文件返回不同的消息
+                message = '文档上传成功（已替换旧文件）' if is_replacement else '文档上传成功'
+                return jsonify({
+                    'success': True,
+                    'message': message,
+                    'document_id': doc_id,
+                    'is_existing': False,
+                    'is_replacement': is_replacement,
+                    'processing_status': doc_data['metadata']['processing_status'],
+                    'processing_message': doc_data['metadata']['processing_message']
+                })
+
     
     @app.route('/api/search')
     def search():
@@ -896,9 +1247,15 @@ def create_app():
     
     @app.route('/api/analytics/knowledge-level')
     def get_knowledge_level():
-        """获取知识点掌握分布"""
+        """获取知识点掌握分布（只统计来自已上传文件的concept）"""
         with db_manager.get_connection() as conn:
-            total_nodes = conn.execute('SELECT COUNT(*) FROM knowledge_nodes').fetchone()[0]
+            # 只统计来自未删除文档的concept节点
+            total_nodes = conn.execute('''
+                SELECT COUNT(*) FROM knowledge_nodes kn
+                LEFT JOIN documents d ON kn.document_id = d.id
+                WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                AND kn.node_type = 'concept'
+            ''').fetchone()[0]
             
             # 简化的掌握度计算（实际应用中需要更复杂的算法）
             if total_nodes == 0:
@@ -930,7 +1287,13 @@ def create_app():
         """获取学习进展预测"""
         with db_manager.get_connection() as conn:
             total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
-            total_nodes = conn.execute('SELECT COUNT(*) FROM knowledge_nodes').fetchone()[0]
+            # 只统计来自未删除文档的concept节点
+            total_nodes = conn.execute('''
+                SELECT COUNT(*) FROM knowledge_nodes kn
+                LEFT JOIN documents d ON kn.document_id = d.id
+                WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                AND kn.node_type = 'concept'
+            ''').fetchone()[0]
             
             # 简化的预测算法
             # 假设目标：100个文档，200个知识点
@@ -1017,13 +1380,71 @@ def create_app():
     
     @app.route('/api/documents/<int:doc_id>', methods=['DELETE'])
     def delete_document(doc_id):
-        """删除文档（软删除）"""
+        """删除文档（硬删除：删除文件、数据库记录和哈希值）"""
         try:
             with db_manager.get_connection() as conn:
+                # 先获取文档信息（包括文件路径和哈希值）
+                doc = conn.execute(
+                    'SELECT file_path, hash_value FROM documents WHERE id = ?',
+                    (doc_id,)
+                ).fetchone()
+                
+                if not doc:
+                    return jsonify({
+                        'success': False,
+                        'message': '文档不存在'
+                    }), 404
+                
+                file_path = doc['file_path']
+                hash_value = doc['hash_value']
+                
+                # 1. 删除uploads文件夹中的文件
+                if file_path and os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                        print(f"已删除文件: {file_path}")
+                    except Exception as e:
+                        print(f"删除文件失败 {file_path}: {e}")
+                        # 即使文件删除失败，也继续删除数据库记录
+                
+                # 2. 获取要删除的知识节点ID（用于从内存图中移除）
+                node_ids_to_delete = conn.execute(
+                    'SELECT id FROM knowledge_nodes WHERE document_id = ? AND node_type = ?',
+                    (doc_id, 'concept')
+                ).fetchall()
+                node_ids = [node['id'] for node in node_ids_to_delete]
+                
+                # 3. 删除关联的知识节点（只删除concept类型的节点）
                 conn.execute(
-                    'UPDATE documents SET is_deleted = 1 WHERE id = ?',
+                    'DELETE FROM knowledge_nodes WHERE document_id = ? AND node_type = ?',
+                    (doc_id, 'concept')
+                )
+                deleted_nodes = conn.rowcount
+                if deleted_nodes > 0:
+                    print(f"已删除 {deleted_nodes} 个关联的知识节点")
+                
+                # 4. 删除关联的知识边（如果源节点或目标节点被删除）
+                if node_ids:
+                    placeholders = ','.join(['?'] * len(node_ids))
+                    conn.execute(
+                        f'DELETE FROM knowledge_edges WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})',
+                        node_ids + node_ids
+                    )
+                
+                # 5. 删除数据库中的记录（包括哈希值）
+                conn.execute(
+                    'DELETE FROM documents WHERE id = ?',
                     (doc_id,)
                 )
+                
+                print(f"已删除文档记录 ID: {doc_id}, 哈希值: {hash_value}")
+                
+                # 6. 从内存中的知识图谱移除已删除的节点
+                for node_id in node_ids:
+                    if node_id in kg_manager.graph:
+                        kg_manager.graph.remove_node(node_id)
+                        print(f"从内存图谱中移除节点 ID: {node_id}")
+                
             return jsonify({
                 'success': True,
                 'message': '文档已删除'

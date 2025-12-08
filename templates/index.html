@@ -10,7 +10,11 @@
     <style>
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        #knowledge-graph { height: 680px; width: 100%; }
+        #knowledge-graph { 
+            height: 100%; 
+            width: 100%; 
+            min-height: 500px;
+        }
         .upload-area {
             border: 2px dashed #d1d5db;
             transition: all 0.3s ease;
@@ -184,8 +188,8 @@
             </div>
 
             <!-- 知识图谱面板 -->
-            <div class="hidden" id="knowledge-graph-view">
-                <div class="flex justify-between items-center mb-4">
+            <div class="hidden space-y-6" id="knowledge-graph-view">
+                <div class="flex justify-between items-center">
                     <h2 class="text-2xl font-bold text-gray-800">知识图谱</h2>
                     <div class="flex space-x-3">
                         <input id="kg-search-input" class="bg-gray-100 py-2 px-4 rounded-lg" placeholder="搜索知识点..." type="text">
@@ -195,13 +199,10 @@
                         </button>
                     </div>
                 </div>
-                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
-                    <div class="flex gap-6">
-                        <!-- 图谱区域 -->
-                        <div class="flex-1">
-                            <div class="bg-gray-50 rounded-lg border border-gray-200" id="knowledge-graph">
-                                <!-- ECharts图表将在此渲染 -->
-                            </div>
+                <div class="bg-white rounded-xl shadow border border-blue-100" style="height: calc(100vh - 220px); min-height: 600px;">
+                    <div class="h-full p-5">
+                        <div class="bg-gray-50 rounded-lg border border-gray-200 h-full w-full" id="knowledge-graph">
+                            <!-- ECharts图表将在此渲染 -->
                         </div>
                     </div>
                 </div>
@@ -297,7 +298,10 @@
                         if (viewType === 'analytics') {
                             initializeAnalytics();
                         } else if (viewType === 'knowledge-graph') {
-                            initializeKnowledgeGraph();
+                            // 延迟初始化，确保容器已显示
+                            setTimeout(() => {
+                                initializeKnowledgeGraph();
+                            }, 50);
                         } else if (viewType === 'documents') {
                             // 如果处于搜索状态，保持搜索结果并应用分类筛选
                             if (searchState.isSearching && searchState.searchResults.length > 0) {
@@ -507,6 +511,10 @@
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 
+                // 获取当前文件的状态显示元素
+                const fileItems = document.querySelectorAll('#file-list > div');
+                const statusSpan = fileItems[i] ? fileItems[i].querySelector('span') : null;
+                
                 try {
                     const formData = new FormData();
                     formData.append('file', file);
@@ -516,37 +524,58 @@
                         body: formData
                     });
                     
-                    const result = await response.json();
+                    let result;
+                    try {
+                        result = await response.json();
+                    } catch (jsonError) {
+                        // 如果响应不是JSON，尝试读取文本
+                        const text = await response.text();
+                        throw new Error(`服务器响应错误: ${text || response.statusText}`);
+                    }
                     
-                    if (result.success) {
+                    if (result && result.success) {
                         uploadedCount++;
                         // 更新进度
                         const progress = Math.round((uploadedCount / totalFiles) * 100);
                         progressFill.style.width = `${progress}%`;
                         progressText.textContent = `${progress}%`;
                         
-                        // 更新文件状态
-                        const fileItems = document.querySelectorAll('#file-list > div');
-                        if (fileItems[i]) {
-                            const statusSpan = fileItems[i].querySelector('span');
+                        if (statusSpan) {
                             statusSpan.textContent = '上传成功';
                             statusSpan.className = 'text-green-500 text-sm';
                         }
+                        
+                        // 刷新文档列表（如果当前在文档管理页面）
+                        try {
+                            const documentsView = document.getElementById('documents-view');
+                            if (documentsView && !documentsView.classList.contains('hidden')) {
+                                await initializeDocuments();
+                            }
+                        } catch (refreshError) {
+                            // 刷新失败不影响上传成功状态
+                            console.warn('刷新文档列表失败:', refreshError);
+                        }
                     } else {
-                        // 标记上传失败
-                        const fileItems = document.querySelectorAll('#file-list > div');
-                        if (fileItems[i]) {
-                            const statusSpan = fileItems[i].querySelector('span');
-                            statusSpan.textContent = '上传失败: ' + result.message;
-                            statusSpan.className = 'text-red-500 text-sm';
+                        // 检查是否是文件已存在的情况（409状态码）
+                        if (response.status === 409) {
+                            // 文件已存在，使用警告样式
+                            if (statusSpan) {
+                                statusSpan.textContent = (result && result.message) || '文件已存在';
+                                statusSpan.className = 'text-yellow-600 text-sm';
+                            }
+                        } else {
+                            // 真正的上传失败
+                            if (statusSpan) {
+                                const errorMsg = (result && result.message) || `HTTP ${response.status}: ${response.statusText}` || '未知错误';
+                                statusSpan.textContent = '上传失败: ' + errorMsg;
+                                statusSpan.className = 'text-red-500 text-sm';
+                            }
                         }
                     }
                 } catch (error) {
                     console.error('上传文件失败:', error);
-                    const fileItems = document.querySelectorAll('#file-list > div');
-                    if (fileItems[i]) {
-                        const statusSpan = fileItems[i].querySelector('span');
-                        statusSpan.textContent = '上传失败';
+                    if (statusSpan) {
+                        statusSpan.textContent = '上传失败: ' + (error.message || '网络错误');
                         statusSpan.className = 'text-red-500 text-sm';
                     }
                 }
@@ -1215,7 +1244,28 @@
 
         // 渲染知识图谱
         function renderKnowledgeGraph(graphData) {
-            const chart = echarts.init(document.getElementById('knowledge-graph'));
+            const chartContainer = document.getElementById('knowledge-graph');
+            if (!chartContainer) {
+                console.error('知识图谱容器不存在');
+                return;
+            }
+            
+            // 如果图表已存在，先销毁
+            const existingChart = echarts.getInstanceByDom(chartContainer);
+            if (existingChart) {
+                existingChart.dispose();
+            }
+            
+            // 确保容器有尺寸
+            if (chartContainer.offsetWidth === 0 || chartContainer.offsetHeight === 0) {
+                // 等待容器显示后再初始化
+                setTimeout(() => {
+                    renderKnowledgeGraph(graphData);
+                }, 200);
+                return;
+            }
+            
+            const chart = echarts.init(chartContainer);
             
             // 转换数据格式
             const nodes = graphData.nodes.map(node => ({
@@ -1239,6 +1289,7 @@
                                     <strong>${params.data.name}</strong><br/>
                                     类型: ${params.data.category}<br/>
                                     ${params.data.description ? '描述: ' + params.data.description : ''}
+
                                 </div>
                             `;
                         } else {
@@ -1301,10 +1352,20 @@
                 }
             });
             
-            window.addEventListener('resize', function() {
-                chart.resize();
-            });
-
+            // 响应窗口大小变化
+            const resizeHandler = function() {
+                if (chart && !chart.isDisposed()) {
+                    chart.resize();
+                }
+            };
+            window.addEventListener('resize', resizeHandler);
+            
+            // 视图显示后调整大小
+            setTimeout(() => {
+                if (chart && !chart.isDisposed()) {
+                    chart.resize();
+                }
+            }, 100);
         }
 
         // 显示节点详情
