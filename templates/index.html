@@ -197,8 +197,77 @@
                             <iconify-icon class="mr-2" icon="mdi:magnify"></iconify-icon>
                             <span>搜索</span>
                         </button>
+                        <button id="kg-clear-btn" class="flex items-center bg-gray-200 hover:bg-gray-300 text-gray-700 py-2 px-4 rounded-lg">
+                            <iconify-icon class="mr-2" icon="mdi:close"></iconify-icon>
+                            <span>清除搜索</span>
+                        </button>
                     </div>
                 </div>
+
+                <!-- 手动管理：节点与关系 -->
+                <div class="grid grid-cols-2 gap-4">
+                    <!-- 节点管理 -->
+                    <div class="bg-white rounded-xl shadow border border-blue-100 p-4 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-bold">节点管理</h3>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <input id="kg-node-name" class="bg-gray-100 py-2 px-3 rounded-lg" placeholder="节点名称">
+                            <select id="kg-node-type" class="bg-gray-100 py-2 px-3 rounded-lg">
+                                <option value="concept">concept</option>
+                                <option value="person">person</option>
+                                <option value="location">location</option>
+                                <option value="other">other</option>
+                            </select>
+                            <input id="kg-node-desc" class="bg-gray-100 py-2 px-3 rounded-lg col-span-2" placeholder="节点描述（可选）">
+                            <button id="kg-add-node" class="col-span-2 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">添加节点</button>
+                        </div>
+                        <div class="max-h-64 overflow-y-auto border-t pt-3">
+                            <table class="min-w-full text-sm">
+                                <thead>
+                                    <tr class="text-left text-gray-500">
+                                        <th class="py-1">名称</th>
+                                        <th class="py-1">类型</th>
+                                        <th class="py-1">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="kg-node-list"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 关系管理 -->
+                    <div class="bg-white rounded-xl shadow border border-blue-100 p-4 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-bold">关系管理</h3>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <select id="kg-edge-source" class="bg-gray-100 py-2 px-3 rounded-lg">
+                                <option value="">选择源节点</option>
+                            </select>
+                            <select id="kg-edge-target" class="bg-gray-100 py-2 px-3 rounded-lg">
+                                <option value="">选择目标节点</option>
+                            </select>
+                            <input id="kg-edge-type" class="bg-gray-100 py-2 px-3 rounded-lg" placeholder="关系类型，如 related">
+                            <input id="kg-edge-weight" class="bg-gray-100 py-2 px-3 rounded-lg" placeholder="权重，默认1.0">
+                            <button id="kg-add-edge" class="col-span-2 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">添加关系</button>
+                        </div>
+                        <div class="max-h-64 overflow-y-auto border-t pt-3">
+                            <table class="min-w-full text-sm">
+                                <thead>
+                                    <tr class="text-left text-gray-500">
+                                        <th class="py-1">源</th>
+                                        <th class="py-1">目标</th>
+                                        <th class="py-1">类型</th>
+                                        <th class="py-1">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="kg-edge-list"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="bg-white rounded-xl shadow border border-blue-100" style="height: calc(100vh - 220px); min-height: 600px;">
                     <div class="h-full p-5">
                         <div class="bg-gray-50 rounded-lg border border-gray-200 h-full w-full" id="knowledge-graph">
@@ -274,6 +343,7 @@
             initializeDocuments();
             initializeKnowledgeGraph();
             initializeAnalytics();
+            loadKgData();
             
             // 切换视图
             const navItems = document.querySelectorAll('.nav-item');
@@ -298,10 +368,12 @@
                         if (viewType === 'analytics') {
                             initializeAnalytics();
                         } else if (viewType === 'knowledge-graph') {
-                            // 延迟初始化，确保容器已显示
-                            setTimeout(() => {
-                                initializeKnowledgeGraph();
-                            }, 50);
+                            // 切换到知识图谱时刷新数据和图
+                            loadKgData().then(() => {
+                                setTimeout(() => {
+                                    initializeKnowledgeGraph();
+                                }, 50);
+                            });
                         } else if (viewType === 'documents') {
                             // 如果处于搜索状态，保持搜索结果并应用分类筛选
                             if (searchState.isSearching && searchState.searchResults.length > 0) {
@@ -320,7 +392,6 @@
                     }
                 });
             });
-            
             
             // 搜索功能
             document.getElementById('search-input').addEventListener('keypress', function(e) {
@@ -377,11 +448,22 @@
                 });
             }
             
-            // 知识图谱搜索
-            document.getElementById('kg-search-btn').addEventListener('click', function() {
-                const query = document.getElementById('kg-search-input').value;
-                searchKnowledgeGraph(query);
-            });
+            // 知识图谱搜索 / 清除
+            const kgSearchBtn = document.getElementById('kg-search-btn');
+            if (kgSearchBtn) {
+                kgSearchBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const query = document.getElementById('kg-search-input').value.trim();
+                    if (query) searchKnowledgeGraph(query);
+                });
+            }
+            const kgClearBtn = document.getElementById('kg-clear-btn');
+            if (kgClearBtn) {
+                kgClearBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    clearKnowledgeGraphSearch();
+                });
+            }
 
             // 学习分析时间筛选
             document.querySelectorAll('.time-filter-btn').forEach(btn => {
@@ -901,6 +983,168 @@
                 console.error('初始化知识图谱失败:', error);
             }
         }
+
+        // 知识图谱手动管理
+        const kgState = {
+            nodes: [],
+            edges: []
+        };
+
+        async function loadKgData() {
+            try {
+                const [nodesRes, edgesRes] = await Promise.all([
+                    fetch(`${API_BASE}/kg/nodes`),
+                    fetch(`${API_BASE}/kg/edges`)
+                ]);
+                const nodesJson = await nodesRes.json();
+                const edgesJson = await edgesRes.json();
+                if (nodesJson.success) kgState.nodes = nodesJson.data;
+                if (edgesJson.success) kgState.edges = edgesJson.data;
+                renderKgNodeList();
+                renderKgEdgeList();
+                refreshEdgeSelectors();
+            } catch (e) {
+                console.error('加载知识图谱数据失败', e);
+            }
+        }
+
+        async function addKgNode() {
+            const name = document.getElementById('kg-node-name').value.trim();
+            const type = document.getElementById('kg-node-type').value;
+            const desc = document.getElementById('kg-node-desc').value.trim();
+            if (!name) return alert('节点名称不能为空');
+            const res = await fetch(`${API_BASE}/kg/nodes`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, type, description: desc})
+            });
+            const result = await res.json();
+            if (result.success) {
+                document.getElementById('kg-node-name').value = '';
+                document.getElementById('kg-node-desc').value = '';
+                await loadKgData();
+                await initializeKnowledgeGraph();
+            } else {
+                alert(result.message || '添加节点失败');
+            }
+        }
+
+        async function deleteKgNode(id) {
+            if (!confirm('确定删除该节点及其关联关系？')) return;
+            const res = await fetch(`${API_BASE}/kg/nodes/${id}`, { method: 'DELETE' });
+            const result = await res.json();
+            if (result.success) {
+                await loadKgData();
+                await initializeKnowledgeGraph();
+            } else {
+                alert(result.message || '删除节点失败');
+            }
+        }
+
+        async function addKgEdge() {
+            const source = document.getElementById('kg-edge-source').value;
+            const target = document.getElementById('kg-edge-target').value;
+            const type = document.getElementById('kg-edge-type').value.trim() || 'related';
+            const weightVal = document.getElementById('kg-edge-weight').value.trim();
+            if (!source || !target) return alert('请选择源节点和目标节点');
+            const weight = weightVal ? parseFloat(weightVal) : 1.0;
+            const res = await fetch(`${API_BASE}/kg/edges`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({source_id: Number(source), target_id: Number(target), relation_type: type, weight})
+            });
+            const result = await res.json();
+            if (result.success) {
+                document.getElementById('kg-edge-type').value = '';
+                document.getElementById('kg-edge-weight').value = '';
+                await loadKgData();
+                await initializeKnowledgeGraph();
+            } else {
+                alert(result.message || '添加关系失败');
+            }
+        }
+
+        async function deleteKgEdge(id) {
+            if (!confirm('确定删除该关系？')) return;
+            const res = await fetch(`${API_BASE}/kg/edges/${id}`, { method: 'DELETE' });
+            const result = await res.json();
+            if (result.success) {
+                await loadKgData();
+                await initializeKnowledgeGraph();
+            } else {
+                alert(result.message || '删除关系失败');
+            }
+        }
+
+        function renderKgNodeList() {
+            const tbody = document.getElementById('kg-node-list');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            kgState.nodes.forEach(node => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="py-1">${node.name}</td>
+                    <td class="py-1">${node.node_type || node.type || ''}</td>
+                    <td class="py-1">
+                        <button class="text-red-500" data-id="${node.id}" onclick="deleteKgNode(${node.id})">删除</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderKgEdgeList() {
+            const tbody = document.getElementById('kg-edge-list');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            const idToName = {};
+            kgState.nodes.forEach(n => { idToName[n.id] = n.name; });
+            kgState.edges.forEach(edge => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="py-1">${idToName[edge.source_id || edge.source] || edge.source}</td>
+                    <td class="py-1">${idToName[edge.target_id || edge.target] || edge.target}</td>
+                    <td class="py-1">${edge.relation_type || edge.type || 'related'}</td>
+                    <td class="py-1">
+                        <button class="text-red-500" data-id="${edge.id}" onclick="deleteKgEdge(${edge.id})">删除</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function refreshEdgeSelectors() {
+            const sourceSel = document.getElementById('kg-edge-source');
+            const targetSel = document.getElementById('kg-edge-target');
+            if (!sourceSel || !targetSel) return;
+            [sourceSel, targetSel].forEach(sel => {
+                sel.innerHTML = '<option value=\"\">选择节点</option>';
+                kgState.nodes.forEach(n => {
+                    const opt = document.createElement('option');
+                    opt.value = n.id;
+                    opt.textContent = n.name;
+                    sel.appendChild(opt);
+                });
+            });
+        }
+
+        // 手动管理按钮绑定，确保加载后可用
+        document.addEventListener('DOMContentLoaded', () => {
+            const addNodeBtn = document.getElementById('kg-add-node');
+            if (addNodeBtn) {
+                addNodeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    addKgNode();
+                });
+            }
+            const addEdgeBtn = document.getElementById('kg-add-edge');
+            if (addEdgeBtn) {
+                addEdgeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    addKgEdge();
+                });
+            }
+        });
 
         // 初始化学习分析
         async function initializeAnalytics() {
@@ -1506,6 +1750,13 @@
             } catch (error) {
                 console.error('搜索知识图谱失败:', error);
             }
+        }
+
+        // 清除知识图谱搜索，回到总览
+        function clearKnowledgeGraphSearch() {
+            const input = document.getElementById('kg-search-input');
+            if (input) input.value = '';
+            initializeKnowledgeGraph();
         }
 
         // 加载学习时长数据

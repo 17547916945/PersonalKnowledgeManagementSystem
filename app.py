@@ -356,72 +356,25 @@ class KnowledgeGraphManager:
             import traceback
             traceback.print_exc()
     
-    def add_knowledge_node(self, name: str, node_type: str, description: str = None, document_id: int = None) -> int:
-        """添加知识节点
-        参数:
-            name: 节点名称
-            node_type: 节点类型（如concept, person等）
-            description: 节点描述
-            document_id: 关联的文档ID，确保节点来自已上传的文件
-        注意: 对于concept类型的节点，确保全局唯一（相同名称只创建一个节点）
-        """
+    def add_knowledge_node(self, name: str, node_type: str = 'concept', description: str = None, document_id: int = None) -> int:
+        """添加知识节点（用户手动管理）"""
         try:
             with self.db.get_connection() as conn:
-                # 对于concept类型，检查全局是否已存在相同名称的节点（不限制document_id）
-                if node_type == 'concept':
-                    existing_node = conn.execute(
-                        'SELECT id, frequency FROM knowledge_nodes WHERE name = ? AND node_type = ? LIMIT 1',
-                        (name, node_type)
-                    ).fetchone()
-                    
-                    if existing_node:
-                        # 如果节点已存在，增加频率并返回现有节点ID
-                        node_id = existing_node['id']
-                        new_frequency = existing_node['frequency'] + 1
-                        conn.execute(
-                            'UPDATE knowledge_nodes SET frequency = ? WHERE id = ?',
-                            (new_frequency, node_id)
-                        )
-                    else:
-                        # 创建新节点
-                        cursor = conn.execute(
-                            'INSERT INTO knowledge_nodes (name, node_type, description, document_id) VALUES (?, ?, ?, ?)',
-                            (name, node_type, description, document_id)
-                        )
-                        node_id = cursor.lastrowid
-                else:
-                    # 对于非concept类型，检查是否已存在相同名称和类型的节点（来自同一文档）
-                    existing_node = conn.execute(
-                        'SELECT id FROM knowledge_nodes WHERE name = ? AND node_type = ? AND document_id = ?',
-                        (name, node_type, document_id)
-                    ).fetchone()
-                    
-                    if existing_node:
-                        # 如果节点已存在，增加频率并返回现有节点ID
-                        conn.execute(
-                            'UPDATE knowledge_nodes SET frequency = frequency + 1 WHERE id = ?',
-                            (existing_node['id'],)
-                        )
-                        node_id = existing_node['id']
-                    else:
-                        # 创建新节点
-                        cursor = conn.execute(
-                            'INSERT INTO knowledge_nodes (name, node_type, description, document_id) VALUES (?, ?, ?, ?)',
-                            (name, node_type, description, document_id)
-                        )
-                        node_id = cursor.lastrowid
-                
-                # 更新内存中的图
-                if node_id not in self.graph:
-                    self.graph.add_node(node_id, name=name, node_type=node_type, description=description, document_id=document_id)
-                else:
-                    # 更新现有节点
-                    self.graph.nodes[node_id]['name'] = name
-                    self.graph.nodes[node_id]['node_type'] = node_type
-                    if description:
-                        self.graph.nodes[node_id]['description'] = description
-                    # 对于concept类型，不更新document_id（保持第一个文档的关联）
-                
+                cursor = conn.execute(
+                    'INSERT INTO knowledge_nodes (name, node_type, description, document_id) VALUES (?, ?, ?, ?)',
+                    (name, node_type, description, document_id)
+                )
+                node_id = cursor.lastrowid
+
+                # 内存图更新
+                self.graph.add_node(
+                    node_id,
+                    name=name,
+                    node_type=node_type,
+                    description=description,
+                    document_id=document_id,
+                    frequency=1
+                )
                 return node_id
         except Exception as e:
             print(f"添加知识节点时出错: {e}")
@@ -1034,19 +987,6 @@ def create_app():
                             'message': f'文档保存失败：无法保存到数据库。请检查文件是否损坏或数据库是否正常。'
                         }), 500
                 
-                # 从关键词创建知识节点，关联到当前文档
-                if doc_data['keywords'] and not doc_data['content'].startswith('['):
-                    try:
-                        for keyword in doc_data['keywords'][:5]:  # 限制前5个关键词
-                            kg_manager.add_knowledge_node(
-                                keyword, 
-                                'concept', 
-                                f'从文档"{doc_data["title"]}"提取的关键词',
-                                document_id=doc_id  # 关联到当前文档
-                            )
-                    except Exception as e:
-                        print(f"创建知识节点时出错: {e}")
-                
                 # 根据是否替换旧文件返回不同的消息
                 message = '文档上传成功（已替换旧文件）' if is_replacement else '文档上传成功'
                 return jsonify({
@@ -1085,6 +1025,94 @@ def create_app():
             'node_count': len(graph_data['nodes']),
             'edge_count': len(graph_data['edges'])
         })
+    
+    # 知识图谱：节点列表/创建
+    @app.route('/api/kg/nodes', methods=['GET', 'POST'])
+    def kg_nodes():
+        if request.method == 'GET':
+            with db_manager.get_connection() as conn:
+                rows = conn.execute('SELECT * FROM knowledge_nodes ORDER BY id DESC').fetchall()
+                return jsonify({'success': True, 'data': [dict(r) for r in rows]})
+        else:
+            data = request.get_json(force=True, silent=True) or {}
+            name = data.get('name', '').strip()
+            node_type = (data.get('type') or 'concept').strip() or 'concept'
+            description = data.get('description')
+            document_id = data.get('document_id')
+            if not name:
+                return jsonify({'success': False, 'message': '节点名称不能为空'}), 400
+            node_id = kg_manager.add_knowledge_node(name, node_type, description, document_id)
+            kg_manager._load_graph_from_db()
+            return jsonify({'success': True, 'id': node_id})
+
+    # 知识图谱：节点更新/删除
+    @app.route('/api/kg/nodes/<int:node_id>', methods=['PUT', 'DELETE'])
+    def kg_node_detail(node_id):
+        if request.method == 'PUT':
+            data = request.get_json(force=True, silent=True) or {}
+            fields = []
+            params = []
+            if 'name' in data:
+                fields.append('name = ?')
+                params.append(data.get('name'))
+            if 'type' in data:
+                fields.append('node_type = ?')
+                params.append(data.get('type'))
+            if 'description' in data:
+                fields.append('description = ?')
+                params.append(data.get('description'))
+            if 'document_id' in data:
+                fields.append('document_id = ?')
+                params.append(data.get('document_id'))
+            if not fields:
+                return jsonify({'success': False, 'message': '没有更新字段'}), 400
+            params.append(node_id)
+            with db_manager.get_connection() as conn:
+                conn.execute(f'UPDATE knowledge_nodes SET {", ".join(fields)} WHERE id = ?', params)
+            kg_manager._load_graph_from_db()
+            return jsonify({'success': True})
+        else:
+            with db_manager.get_connection() as conn:
+                conn.execute('DELETE FROM knowledge_edges WHERE source_id = ? OR target_id = ?', (node_id, node_id))
+                conn.execute('DELETE FROM knowledge_nodes WHERE id = ?', (node_id,))
+            kg_manager._load_graph_from_db()
+            return jsonify({'success': True})
+
+    # 知识图谱：边列表/创建
+    @app.route('/api/kg/edges', methods=['GET', 'POST'])
+    def kg_edges():
+        if request.method == 'GET':
+            with db_manager.get_connection() as conn:
+                rows = conn.execute('SELECT * FROM knowledge_edges ORDER BY id DESC').fetchall()
+                return jsonify({'success': True, 'data': [dict(r) for r in rows]})
+        else:
+            data = request.get_json(force=True, silent=True) or {}
+            try:
+                source_id = int(data.get('source_id'))
+                target_id = int(data.get('target_id'))
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'message': 'source_id 和 target_id 必须为整数'}), 400
+            relation_type = (data.get('relation_type') or 'related').strip() or 'related'
+            try:
+                weight = float(data.get('weight', 1.0))
+            except (TypeError, ValueError):
+                weight = 1.0
+            with db_manager.get_connection() as conn:
+                cursor = conn.execute(
+                    'INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight) VALUES (?, ?, ?, ?)',
+                    (source_id, target_id, relation_type, weight)
+                )
+                edge_id = cursor.lastrowid
+            kg_manager._load_graph_from_db()
+            return jsonify({'success': True, 'id': edge_id})
+
+    # 知识图谱：边删除
+    @app.route('/api/kg/edges/<int:edge_id>', methods=['DELETE'])
+    def kg_edge_detail(edge_id):
+        with db_manager.get_connection() as conn:
+            conn.execute('DELETE FROM knowledge_edges WHERE id = ?', (edge_id,))
+        kg_manager._load_graph_from_db()
+        return jsonify({'success': True})
     
     @app.route('/knowledge-graph')
     def knowledge_graph_page():
