@@ -82,6 +82,10 @@
                     <iconify-icon class="text-xl" icon="mdi:chart-box"></iconify-icon>
                     <span>学习分析</span>
                 </button>
+                <button class="nav-item flex items-center space-x-3 p-3 rounded-lg text-gray-700 hover:bg-blue-50" data-view="ai-assistant">
+                    <iconify-icon class="text-xl" icon="mdi:robot"></iconify-icon>
+                    <span>AI学习助手</span>
+                </button>
             </nav>
         </aside>
 
@@ -291,6 +295,79 @@
                     <div class="h-full p-5">
                         <div class="bg-gray-50 rounded-lg border border-gray-200 h-full w-full" id="knowledge-graph">
                             <!-- ECharts图表将在此渲染 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI学习助手面板 -->
+            <div class="hidden space-y-6" id="ai-assistant-view">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">AI学习助手</h2>
+                
+                <!-- 快捷功能卡片 -->
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <button class="ai-quick-action bg-white rounded-xl shadow p-4 border border-blue-100 hover:bg-blue-50 transition-colors text-left" data-action="suggestion">
+                        <div class="flex items-center mb-2">
+                            <iconify-icon class="text-2xl text-blue-600 mr-2" icon="mdi:lightbulb-on"></iconify-icon>
+                            <h3 class="font-bold text-gray-800">学习建议</h3>
+                        </div>
+                        <p class="text-sm text-gray-600">获取个性化学习路径和规划建议</p>
+                    </button>
+                    <button class="ai-quick-action bg-white rounded-xl shadow p-4 border border-blue-100 hover:bg-blue-50 transition-colors text-left" data-action="explain">
+                        <div class="flex items-center mb-2">
+                            <iconify-icon class="text-2xl text-green-600 mr-2" icon="mdi:book-open-variant"></iconify-icon>
+                            <h3 class="font-bold text-gray-800">概念解释</h3>
+                        </div>
+                        <p class="text-sm text-gray-600">详细解释知识点和概念</p>
+                    </button>
+                    <button class="ai-quick-action bg-white rounded-xl shadow p-4 border border-blue-100 hover:bg-blue-50 transition-colors text-left" data-action="review">
+                        <div class="flex items-center mb-2">
+                            <iconify-icon class="text-2xl text-purple-600 mr-2" icon="mdi:calendar-clock"></iconify-icon>
+                            <h3 class="font-bold text-gray-800">复习计划</h3>
+                        </div>
+                        <p class="text-sm text-gray-600">生成科学的复习计划</p>
+                    </button>
+                </div>
+
+                <!-- 对话区域 -->
+                <div class="bg-white rounded-xl shadow border border-blue-100 flex flex-col" style="height: 600px;">
+                    <!-- 消息列表 -->
+                    <div class="flex-1 overflow-y-auto p-6 space-y-4" id="ai-chat-messages">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                <iconify-icon class="text-white text-lg" icon="mdi:robot"></iconify-icon>
+                            </div>
+                            <div class="flex-1 bg-blue-50 rounded-lg p-4">
+                                <p class="text-gray-800">你好！我是你的AI学习助手。我可以帮助你：</p>
+                                <ul class="list-disc list-inside mt-2 text-sm text-gray-600 space-y-1">
+                                    <li>回答学习相关的问题</li>
+                                    <li>提供学习建议和路径规划</li>
+                                    <li>解释复杂的概念和知识点</li>
+                                    <li>制定复习计划</li>
+                                </ul>
+                                <p class="text-gray-800 mt-2">有什么我可以帮助你的吗？</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 输入区域 -->
+                    <div class="border-t border-gray-200 p-4">
+                        <div class="flex space-x-3">
+                            <input 
+                                type="text" 
+                                id="ai-chat-input" 
+                                class="flex-1 bg-gray-100 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                                placeholder="输入你的问题或消息..."
+                                onkeypress="if(event.key === 'Enter') sendAIMessage()"
+                            >
+                            <button 
+                                id="ai-send-btn" 
+                                class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg flex items-center"
+                                onclick="sendAIMessage()"
+                            >
+                                <iconify-icon class="mr-2" icon="mdi:send"></iconify-icon>
+                                <span>发送</span>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -2576,6 +2653,175 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
                     <span>${rec}</span>
                 </li>
             `).join('');
+        }
+
+        // AI学习助手相关功能
+        let aiChatContext = []; // 存储对话历史
+
+        // 发送AI消息
+        async function sendAIMessage() {
+            const input = document.getElementById('ai-chat-input');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // 清空输入框
+            input.value = '';
+            
+            // 添加用户消息到界面
+            addChatMessage('user', message);
+            
+            // 显示加载状态
+            const loadingId = addChatMessage('assistant', '正在思考...', true);
+            
+            try {
+                const response = await fetch(`${API_BASE}/ai-assistant/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        context: aiChatContext
+                    })
+                });
+                
+                const result = await response.json();
+                
+                // 移除加载消息
+                document.getElementById(loadingId)?.remove();
+                
+                if (result.success) {
+                    // 添加AI回复
+                    addChatMessage('assistant', result.message);
+                    
+                    // 更新对话历史
+                    aiChatContext.push(
+                        { role: 'user', content: message },
+                        { role: 'assistant', content: result.message }
+                    );
+                    
+                    // 限制历史记录长度
+                    if (aiChatContext.length > 20) {
+                        aiChatContext = aiChatContext.slice(-20);
+                    }
+                } else {
+                    addChatMessage('assistant', result.message || '抱歉，发生了错误，请稍后再试。');
+                }
+            } catch (error) {
+                console.error('发送消息失败:', error);
+                document.getElementById(loadingId)?.remove();
+                addChatMessage('assistant', '抱歉，网络连接失败，请检查网络后重试。');
+            }
+        }
+
+        // 添加聊天消息到界面
+        function addChatMessage(role, content, isLoading = false) {
+            const messagesContainer = document.getElementById('ai-chat-messages');
+            if (!messagesContainer) return;
+            
+            const messageId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.id = messageId;
+            messageDiv.className = `flex items-start space-x-3 ${isLoading ? 'opacity-50' : ''}`;
+            
+            if (role === 'user') {
+                messageDiv.innerHTML = `
+                    <div class="flex-1"></div>
+                    <div class="flex items-start space-x-3 flex-row-reverse">
+                        <div class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0">
+                            <iconify-icon class="text-gray-600 text-lg" icon="mdi:account"></iconify-icon>
+                        </div>
+                        <div class="flex-1 bg-blue-600 text-white rounded-lg p-4 max-w-md">
+                            <p class="whitespace-pre-wrap">${escapeHtml(content)}</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                messageDiv.innerHTML = `
+                    <div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                        <iconify-icon class="text-white text-lg" icon="mdi:robot"></iconify-icon>
+                    </div>
+                    <div class="flex-1 bg-blue-50 rounded-lg p-4">
+                        <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(content)}</p>
+                    </div>
+                `;
+            }
+            
+            messagesContainer.appendChild(messageDiv);
+            
+            // 滚动到底部
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            return messageId;
+        }
+
+        // HTML转义函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 快捷功能处理
+        document.addEventListener('DOMContentLoaded', function() {
+            const quickActions = document.querySelectorAll('.ai-quick-action');
+            quickActions.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const action = this.getAttribute('data-action');
+                    handleQuickAction(action);
+                });
+            });
+        });
+
+        // 处理快捷功能
+        async function handleQuickAction(action) {
+            const input = document.getElementById('ai-chat-input');
+            if (!input) return;
+            
+            if (action === 'suggestion') {
+                const topic = prompt('请输入你想学习的话题：');
+                if (topic) {
+                    input.value = `请为"${topic}"提供学习建议和学习路径规划`;
+                    sendAIMessage();
+                }
+            } else if (action === 'explain') {
+                const concept = prompt('请输入你想了解的概念：');
+                if (concept) {
+                    input.value = `请详细解释"${concept}"这个概念`;
+                    sendAIMessage();
+                }
+            } else if (action === 'review') {
+                const points = prompt('请输入要复习的知识点（用逗号分隔）：');
+                if (points) {
+                    const pointsList = points.split(',').map(p => p.trim()).filter(p => p);
+                    if (pointsList.length > 0) {
+                        try {
+                            const response = await fetch(`${API_BASE}/ai-assistant/review-plan`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    knowledge_points: pointsList
+                                })
+                            });
+                            
+                            const result = await response.json();
+                            
+                            if (result.success) {
+                                addChatMessage('assistant', result.message);
+                            } else {
+                                addChatMessage('assistant', result.message || '生成复习计划失败，请稍后再试。');
+                            }
+                        } catch (error) {
+                            console.error('生成复习计划失败:', error);
+                            addChatMessage('assistant', '网络错误，请稍后再试。');
+                        }
+                    }
+                }
+            }
         }
     </script>
 </body>

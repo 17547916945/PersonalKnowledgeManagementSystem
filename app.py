@@ -23,6 +23,14 @@ import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
+import requests
+
+# 导入配置文件
+try:
+    from config import ALIYUN_API_KEY
+except ImportError:
+    ALIYUN_API_KEY = None
+    print("警告：未找到 config.py 文件，AI 学习助手功能将不可用")
 
 # 尝试导入PDF处理库
 try:
@@ -332,6 +340,142 @@ class AIProcessor:
                     entities['concepts'].append(ent.text)
         
         return entities
+
+# AI学习助手类
+class AIAssistant:
+    """AI学习助手类 - 使用DeepSeek API提供智能问答和学习建议"""
+    
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or ALIYUN_API_KEY
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.model = "deepseek-chat"
+        
+    def _call_api(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> Optional[str]:
+        """调用DeepSeek API"""
+        if not self.api_key:
+            return None
+        
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            
+            data = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": 2000
+            }
+            
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if 'choices' in result and len(result['choices']) > 0:
+                    return result['choices'][0]['message']['content']
+            else:
+                print(f"DeepSeek API 错误: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            print(f"调用DeepSeek API失败: {str(e)}")
+            return None
+    
+    def chat(self, user_message: str, context: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        """与AI助手对话"""
+        system_prompt = """你是一个专业的学习助手，专门帮助学生进行知识管理和学习。
+你的职责包括：
+1. 回答学生关于学习内容的问题
+2. 提供学习建议和学习路径规划
+3. 解释复杂的概念和知识点
+4. 帮助学生理解知识之间的关联
+5. 提供复习建议和记忆技巧
+
+请用中文回答，回答要简洁明了、专业准确。"""
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # 添加上下文对话历史
+        if context:
+            messages.extend(context)
+        
+        # 添加当前用户消息
+        messages.append({"role": "user", "content": user_message})
+        
+        response = self._call_api(messages)
+        
+        if response:
+            return {
+                "success": True,
+                "message": response,
+                "model": self.model
+            }
+        else:
+            return {
+                "success": False,
+                "message": "抱歉，AI服务暂时不可用，请稍后再试。",
+                "error": "API调用失败"
+            }
+    
+    def get_learning_suggestion(self, topic: str, user_documents: List[Dict] = None) -> Dict[str, Any]:
+        """获取学习建议"""
+        context_info = ""
+        if user_documents:
+            doc_titles = [doc.get('title', '') for doc in user_documents[:5]]
+            context_info = f"\n用户已学习的文档包括：{', '.join(doc_titles)}"
+        
+        prompt = f"""请为以下学习主题提供详细的学习建议和学习路径：
+主题：{topic}
+{context_info}
+
+请提供：
+1. 学习路径规划（从基础到高级）
+2. 重点知识点
+3. 推荐的学习资源类型
+4. 学习时间安排建议
+5. 实践建议"""
+        
+        return self.chat(prompt)
+    
+    def explain_concept(self, concept: str, related_docs: List[Dict] = None) -> Dict[str, Any]:
+        """解释概念"""
+        context_info = ""
+        if related_docs:
+            doc_content = related_docs[0].get('content', '')[:500] if related_docs else ""
+            context_info = f"\n相关文档内容片段：{doc_content}"
+        
+        prompt = f"""请详细解释以下概念：
+概念：{concept}
+{context_info}
+
+请用通俗易懂的方式解释，包括：
+1. 基本定义
+2. 核心要点
+3. 实际应用
+4. 与其他概念的关系"""
+        
+        return self.chat(prompt)
+    
+    def generate_review_plan(self, knowledge_points: List[str]) -> Dict[str, Any]:
+        """生成复习计划"""
+        points_str = "\n".join([f"- {point}" for point in knowledge_points])
+        
+        prompt = f"""根据以下知识点，制定一个合理的复习计划：
+{points_str}
+
+请提供：
+1. 复习时间安排（基于艾宾浩斯遗忘曲线）
+2. 每个知识点的复习重点
+3. 复习方法建议
+4. 自测题目建议"""
+        
+        return self.chat(prompt)
 
 # 知识图谱管理类
 class KnowledgeGraphManager:
@@ -952,6 +1096,7 @@ def create_app():
     ai_processor = AIProcessor()
     kg_manager = KnowledgeGraphManager(db_manager)
     doc_manager = DocumentManager(db_manager, ai_processor)
+    ai_assistant = AIAssistant()
     
     # 注册路由
     @app.route('/')
@@ -2082,6 +2227,121 @@ def create_app():
             return jsonify({
                 'success': False,
                 'message': f'删除失败: {str(e)}'
+            }), 500
+    
+    # AI学习助手API
+    @app.route('/api/ai-assistant/chat', methods=['POST'])
+    def ai_chat():
+        """AI对话接口"""
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            user_message = data.get('message', '').strip()
+            
+            if not user_message:
+                return jsonify({
+                    'success': False,
+                    'message': '消息内容不能为空'
+                }), 400
+            
+            # 获取对话历史（可选）
+            context = data.get('context', [])
+            
+            # 调用AI助手
+            result = ai_assistant.chat(user_message, context)
+            
+            return jsonify(result)
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'处理请求失败: {str(e)}'
+            }), 500
+    
+    @app.route('/api/ai-assistant/suggestion', methods=['POST'])
+    def ai_suggestion():
+        """获取学习建议"""
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            topic = data.get('topic', '').strip()
+            
+            if not topic:
+                return jsonify({
+                    'success': False,
+                    'message': '学习主题不能为空'
+                }), 400
+            
+            # 获取用户文档列表（可选）
+            user_documents = []
+            if data.get('include_documents', False):
+                with db_manager.get_connection() as conn:
+                    docs = conn.execute(
+                        'SELECT id, title, content FROM documents WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 10'
+                    ).fetchall()
+                    user_documents = [dict(doc) for doc in docs]
+            
+            # 调用AI助手获取建议
+            result = ai_assistant.get_learning_suggestion(topic, user_documents)
+            
+            return jsonify(result)
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'处理请求失败: {str(e)}'
+            }), 500
+    
+    @app.route('/api/ai-assistant/explain', methods=['POST'])
+    def ai_explain():
+        """解释概念"""
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            concept = data.get('concept', '').strip()
+            
+            if not concept:
+                return jsonify({
+                    'success': False,
+                    'message': '概念名称不能为空'
+                }), 400
+            
+            # 查找相关文档
+            related_docs = []
+            if data.get('search_documents', True):
+                results = doc_manager.search_documents(concept, limit=3)
+                related_docs = results
+            
+            # 调用AI助手解释概念
+            result = ai_assistant.explain_concept(concept, related_docs)
+            
+            return jsonify(result)
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'处理请求失败: {str(e)}'
+            }), 500
+    
+    @app.route('/api/ai-assistant/review-plan', methods=['POST'])
+    def ai_review_plan():
+        """生成复习计划"""
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            knowledge_points = data.get('knowledge_points', [])
+            
+            if not knowledge_points or not isinstance(knowledge_points, list):
+                return jsonify({
+                    'success': False,
+                    'message': '知识点列表不能为空'
+                }), 400
+            
+            # 调用AI助手生成复习计划
+            result = ai_assistant.generate_review_plan(knowledge_points)
+            
+            return jsonify(result)
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'处理请求失败: {str(e)}'
             }), 500
     
     return app
