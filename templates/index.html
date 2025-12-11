@@ -192,6 +192,25 @@
                 <div class="flex justify-between items-center">
                     <h2 class="text-2xl font-bold text-gray-800">知识图谱</h2>
                     <div class="flex space-x-3">
+                        <div class="flex items-center space-x-2">
+                            <select id="kg-scheme-select" class="bg-gray-100 py-2 px-4 rounded-lg border border-gray-300">
+                                <option value="">加载方案中...</option>
+                            </select>
+                            <button id="kg-rename-scheme-btn" class="flex items-center bg-yellow-600 hover:bg-yellow-700 text-white py-2 px-3 rounded-lg" title="重命名当前方案">
+                                <iconify-icon icon="mdi:pencil"></iconify-icon>
+                            </button>
+                            <button id="kg-delete-scheme-btn" class="flex items-center bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded-lg" title="删除当前方案">
+                                <iconify-icon icon="mdi:delete"></iconify-icon>
+                            </button>
+                        </div>
+                        <button id="kg-new-scheme-btn" class="flex items-center bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg">
+                            <iconify-icon class="mr-2" icon="mdi:plus"></iconify-icon>
+                            <span>新建方案</span>
+                        </button>
+                        <button id="kg-export-btn" class="flex items-center bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg" title="导出知识图谱为图片">
+                            <iconify-icon class="mr-2" icon="mdi:download"></iconify-icon>
+                            <span>导出图片</span>
+                        </button>
                         <input id="kg-search-input" class="bg-gray-100 py-2 px-4 rounded-lg" placeholder="搜索知识点..." type="text">
                         <button id="kg-search-btn" class="flex items-center bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg">
                             <iconify-icon class="mr-2" icon="mdi:magnify"></iconify-icon>
@@ -279,13 +298,24 @@
 
             <!-- 学习分析面板 -->
             <div class="hidden space-y-6" id="analytics-view">
-                <h2 class="text-2xl font-bold text-gray-800 mb-4">学习分析</h2>
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-gray-800">学习分析</h2>
+                    <button id="generate-report-btn" class="flex items-center bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg">
+                        <iconify-icon class="mr-2" icon="mdi:file-document-outline"></iconify-icon>
+                        <span>生成学习报告</span>
+                    </button>
+                </div>
+                
+                <!-- 学习进度概览 -->
+                <div class="grid grid-cols-4 gap-4 mb-6" id="progress-overview">
+                    <!-- 进度卡片将通过JavaScript动态加载 -->
+                </div>
                 
                 <div class="grid grid-cols-3 gap-6 mb-6">
                     <!-- 学习时长统计 -->
                     <div class="bg-white rounded-xl shadow p-5 border border-blue-100 col-span-2">
                         <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-lg font-bold">每周学习时长统计</h3>
+                            <h3 class="text-lg font-bold">学习时长统计</h3>
                             <div class="flex space-x-2">
                                 <button class="time-filter-btn text-xs bg-blue-100 hover:bg-blue-200 rounded px-2 py-1" data-period="week">本周</button>
                                 <button class="time-filter-btn text-xs bg-gray-100 hover:bg-gray-200 rounded px-2 py-1" data-period="month">本月</button>
@@ -293,6 +323,7 @@
                             </div>
                         </div>
                         <div class="h-64" id="study-time-chart"></div>
+                        <div class="mt-2 text-sm text-gray-600" id="study-time-summary"></div>
                     </div>
                     
                     <!-- 知识点掌握分析 -->
@@ -300,6 +331,19 @@
                         <h3 class="text-lg font-bold mb-4">知识点掌握分布</h3>
                         <div class="h-64" id="knowledge-level-chart"></div>
                     </div>
+                </div>
+                
+                <!-- 知识网络成长轨迹 -->
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100 mb-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold">知识网络成长轨迹</h3>
+                        <div class="flex space-x-2">
+                            <button class="growth-filter-btn text-xs bg-blue-100 hover:bg-blue-200 rounded px-2 py-1" data-period="day">按天</button>
+                            <button class="growth-filter-btn text-xs bg-gray-100 hover:bg-gray-200 rounded px-2 py-1" data-period="week">按周</button>
+                            <button class="growth-filter-btn text-xs bg-gray-100 hover:bg-gray-200 rounded px-2 py-1" data-period="month">按月</button>
+                        </div>
+                    </div>
+                    <div class="h-80" id="growth-chart"></div>
                 </div>
                 
                 <!-- 进度预测和建议 -->
@@ -311,7 +355,7 @@
                             重新生成预测
                         </button>
                     </div>
-                    <div class="grid grid-cols-3 gap-4" id="prediction-cards">
+                    <div class="grid grid-cols-4 gap-4" id="prediction-cards">
                         <!-- 预测数据将通过JavaScript动态加载 -->
                     </div>
                     <div class="mt-6">
@@ -341,9 +385,12 @@
             // 初始化各视图数据
             initializeDashboard();
             initializeDocuments();
-            initializeKnowledgeGraph();
             initializeAnalytics();
-            loadKgData();
+            // 先加载方案，再加载知识图谱数据
+            loadKgSchemes().then(() => {
+                loadKgData();
+                initializeKnowledgeGraph();
+            });
             
             // 切换视图
             const navItems = document.querySelectorAll('.nav-item');
@@ -369,7 +416,9 @@
                             initializeAnalytics();
                         } else if (viewType === 'knowledge-graph') {
                             // 切换到知识图谱时刷新数据和图
-                            loadKgData().then(() => {
+                            loadKgSchemes().then(() => {
+                                return loadKgData();
+                            }).then(() => {
                                 setTimeout(() => {
                                     initializeKnowledgeGraph();
                                 }, 50);
@@ -465,6 +514,62 @@
                 });
             }
 
+            // 方案管理
+            const kgSchemeSelect = document.getElementById('kg-scheme-select');
+            if (kgSchemeSelect) {
+                kgSchemeSelect.addEventListener('change', function(e) {
+                    const schemeId = parseInt(this.value);
+                    if (schemeId) {
+                        switchKgScheme(schemeId);
+                    }
+                });
+            }
+
+            const kgNewSchemeBtn = document.getElementById('kg-new-scheme-btn');
+            if (kgNewSchemeBtn) {
+                kgNewSchemeBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    createKgScheme();
+                });
+            }
+
+            const kgRenameSchemeBtn = document.getElementById('kg-rename-scheme-btn');
+            if (kgRenameSchemeBtn) {
+                kgRenameSchemeBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const schemeId = kgState.currentSchemeId;
+                    if (schemeId) {
+                        renameKgScheme(schemeId);
+                    } else {
+                        alert('请先选择一个方案');
+                    }
+                });
+            }
+
+            const kgDeleteSchemeBtn = document.getElementById('kg-delete-scheme-btn');
+            if (kgDeleteSchemeBtn) {
+                kgDeleteSchemeBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const schemeId = kgState.currentSchemeId;
+                    if (schemeId) {
+                        deleteKgScheme(schemeId);
+                    } else {
+                        alert('请先选择一个方案');
+                    }
+                });
+            }
+
+            const kgExportBtn = document.getElementById('kg-export-btn');
+            if (kgExportBtn) {
+                kgExportBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    exportKnowledgeGraph();
+                });
+            }
+
+            // 加载方案列表
+            loadKgSchemes();
+
             // 学习分析时间筛选
             document.querySelectorAll('.time-filter-btn').forEach(btn => {
                 btn.addEventListener('click', function() {
@@ -482,10 +587,36 @@
                 });
             });
 
+            // 成长轨迹时间筛选
+            document.querySelectorAll('.growth-filter-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    // 更新按钮状态
+                    document.querySelectorAll('.growth-filter-btn').forEach(b => {
+                        b.classList.remove('bg-blue-100');
+                        b.classList.add('bg-gray-100');
+                    });
+                    this.classList.remove('bg-gray-100');
+                    this.classList.add('bg-blue-100');
+                    
+                    // 重新加载数据
+                    const period = this.getAttribute('data-period');
+                    loadGrowthTrajectory(period);
+                });
+            });
+
             // 刷新预测
             document.getElementById('refresh-prediction').addEventListener('click', function() {
                 initializeAnalytics();
             });
+
+            // 生成学习报告
+            const generateReportBtn = document.getElementById('generate-report-btn');
+            if (generateReportBtn) {
+                generateReportBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    generateLearningReport();
+                });
+            }
         });
 
         // 切换上传区域显示
@@ -973,7 +1104,9 @@
         // 初始化知识图谱
         async function initializeKnowledgeGraph() {
             try {
-                const response = await fetch(`${API_BASE}/knowledge-graph`);
+                const schemeId = kgState.currentSchemeId;
+                const url = `${API_BASE}/knowledge-graph${schemeId ? '?scheme_id=' + schemeId : ''}`;
+                const response = await fetch(url);
                 const result = await response.json();
                 
                 if (result.success) {
@@ -987,14 +1120,160 @@
         // 知识图谱手动管理
         const kgState = {
             nodes: [],
-            edges: []
+            edges: [],
+            schemes: [],
+            currentSchemeId: null,
+            chartInstance: null  // 保存ECharts实例，用于导出
         };
+
+        // 加载方案列表
+        async function loadKgSchemes() {
+            try {
+                const res = await fetch(`${API_BASE}/kg/schemes`);
+                const result = await res.json();
+                if (result.success) {
+                    kgState.schemes = result.data;
+                    kgState.currentSchemeId = result.current_scheme_id;
+                    renderKgSchemeSelect();
+                }
+            } catch (e) {
+                console.error('加载方案列表失败', e);
+            }
+        }
+
+        // 渲染方案选择器
+        function renderKgSchemeSelect() {
+            const select = document.getElementById('kg-scheme-select');
+            if (!select) return;
+            select.innerHTML = '';
+            kgState.schemes.forEach(scheme => {
+                const opt = document.createElement('option');
+                opt.value = scheme.id;
+                opt.textContent = scheme.name + (scheme.is_default ? ' (默认)' : '');
+                if (scheme.id === kgState.currentSchemeId) {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+        }
+
+        // 切换方案
+        async function switchKgScheme(schemeId) {
+            try {
+                const res = await fetch(`${API_BASE}/kg/schemes/${schemeId}/switch`, {
+                    method: 'POST'
+                });
+                const result = await res.json();
+                if (result.success) {
+                    kgState.currentSchemeId = schemeId;
+                    await loadKgData();
+                    await initializeKnowledgeGraph();
+                    showNotification('方案切换成功', 'success');
+                } else {
+                    alert(result.message || '切换方案失败');
+                }
+            } catch (e) {
+                console.error('切换方案失败', e);
+                alert('切换方案失败');
+            }
+        }
+
+        // 创建新方案
+        async function createKgScheme() {
+            const name = prompt('请输入方案名称：');
+            if (!name || !name.trim()) return;
+            const description = prompt('请输入方案描述（可选）：') || '';
+            try {
+                const res = await fetch(`${API_BASE}/kg/schemes`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: name.trim(), description: description.trim()})
+                });
+                const result = await res.json();
+                if (result.success) {
+                    await loadKgSchemes();
+                    await switchKgScheme(result.scheme_id);
+                    showNotification('方案创建成功', 'success');
+                } else {
+                    alert(result.message || '创建方案失败');
+                }
+            } catch (e) {
+                console.error('创建方案失败', e);
+                alert('创建方案失败');
+            }
+        }
+
+        // 删除方案
+        async function deleteKgScheme(schemeId) {
+            if (!confirm('确定删除该方案？这将删除该方案下的所有节点和关系！')) return;
+            try {
+                const res = await fetch(`${API_BASE}/kg/schemes/${schemeId}`, {
+                    method: 'DELETE'
+                });
+                const result = await res.json();
+                if (result.success) {
+                    await loadKgSchemes();
+                    await loadKgData();
+                    await initializeKnowledgeGraph();
+                    showNotification('方案删除成功', 'success');
+                } else {
+                    alert(result.message || '删除方案失败');
+                }
+            } catch (e) {
+                console.error('删除方案失败', e);
+                alert('删除方案失败');
+            }
+        }
+
+        // 重命名方案
+        async function renameKgScheme(schemeId) {
+            if (!schemeId) {
+                alert('请先选择一个方案');
+                return;
+            }
+            
+            // 获取当前方案信息
+            const currentScheme = kgState.schemes.find(s => s.id === schemeId);
+            if (!currentScheme) {
+                alert('方案不存在');
+                return;
+            }
+            
+            // 弹出输入框让用户输入新名称
+            const newName = prompt('请输入新的方案名称：', currentScheme.name);
+            if (!newName || !newName.trim()) {
+                return; // 用户取消或输入为空
+            }
+            
+            if (newName.trim() === currentScheme.name) {
+                return; // 名称没有变化
+            }
+            
+            try {
+                const res = await fetch(`${API_BASE}/kg/schemes/${schemeId}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: newName.trim()})
+                });
+                const result = await res.json();
+                if (result.success) {
+                    await loadKgSchemes();
+                    showNotification('方案重命名成功', 'success');
+                } else {
+                    alert(result.message || '重命名方案失败');
+                }
+            } catch (e) {
+                console.error('重命名方案失败', e);
+                alert('重命名方案失败');
+            }
+        }
 
         async function loadKgData() {
             try {
+                const schemeId = kgState.currentSchemeId;
                 const [nodesRes, edgesRes] = await Promise.all([
-                    fetch(`${API_BASE}/kg/nodes`),
-                    fetch(`${API_BASE}/kg/edges`)
+                    fetch(`${API_BASE}/kg/nodes${schemeId ? '?scheme_id=' + schemeId : ''}`),
+                    fetch(`${API_BASE}/kg/edges${schemeId ? '?scheme_id=' + schemeId : ''}`)
                 ]);
                 const nodesJson = await nodesRes.json();
                 const edgesJson = await edgesRes.json();
@@ -1013,10 +1292,11 @@
             const type = document.getElementById('kg-node-type').value;
             const desc = document.getElementById('kg-node-desc').value.trim();
             if (!name) return alert('节点名称不能为空');
+            if (!kgState.currentSchemeId) return alert('请先选择一个方案');
             const res = await fetch(`${API_BASE}/kg/nodes`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name, type, description: desc})
+                body: JSON.stringify({name, type, description: desc, scheme_id: kgState.currentSchemeId})
             });
             const result = await res.json();
             if (result.success) {
@@ -1047,11 +1327,12 @@
             const type = document.getElementById('kg-edge-type').value.trim() || 'related';
             const weightVal = document.getElementById('kg-edge-weight').value.trim();
             if (!source || !target) return alert('请选择源节点和目标节点');
+            if (!kgState.currentSchemeId) return alert('请先选择一个方案');
             const weight = weightVal ? parseFloat(weightVal) : 1.0;
             const res = await fetch(`${API_BASE}/kg/edges`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({source_id: Number(source), target_id: Number(target), relation_type: type, weight})
+                body: JSON.stringify({source_id: Number(source), target_id: Number(target), relation_type: type, weight, scheme_id: kgState.currentSchemeId})
             });
             const result = await res.json();
             if (result.success) {
@@ -1149,6 +1430,9 @@
         // 初始化学习分析
         async function initializeAnalytics() {
             try {
+                // 加载学习进度概览
+                await loadProgressOverview();
+                
                 // 加载学习时长统计
                 const timeResponse = await fetch(`${API_BASE}/analytics/study-time?period=week`);
                 const timeResult = await timeResponse.json();
@@ -1163,6 +1447,9 @@
                     renderKnowledgeLevelChart(levelResult.data);
                 }
 
+                // 加载知识网络成长轨迹
+                await loadGrowthTrajectory('month');
+
                 // 加载学习预测
                 const predictionResponse = await fetch(`${API_BASE}/analytics/prediction`);
                 const predictionResult = await predictionResponse.json();
@@ -1172,6 +1459,143 @@
             } catch (error) {
                 console.error('初始化学习分析失败:', error);
             }
+        }
+
+        // 加载学习进度概览
+        async function loadProgressOverview() {
+            try {
+                const response = await fetch(`${API_BASE}/analytics/progress`);
+                const result = await response.json();
+                if (result.success) {
+                    renderProgressOverview(result.data);
+                }
+            } catch (error) {
+                console.error('加载学习进度失败:', error);
+            }
+        }
+
+        // 渲染学习进度概览
+        function renderProgressOverview(data) {
+            const container = document.getElementById('progress-overview');
+            if (!container) return;
+            
+            container.innerHTML = `
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">文档总数</p>
+                            <p class="text-3xl font-bold text-blue-600">${data.total_docs}</p>
+                        </div>
+                        <div class="p-2 bg-blue-50 rounded-lg">
+                            <iconify-icon class="text-blue-600 text-2xl" icon="mdi:file-document-multiple"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">知识节点</p>
+                            <p class="text-3xl font-bold text-green-600">${data.total_nodes}</p>
+                        </div>
+                        <div class="p-2 bg-green-50 rounded-lg">
+                            <iconify-icon class="text-green-600 text-2xl" icon="mdi:graph"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">关系数量</p>
+                            <p class="text-3xl font-bold text-purple-600">${data.total_edges}</p>
+                        </div>
+                        <div class="p-2 bg-purple-50 rounded-lg">
+                            <iconify-icon class="text-purple-600 text-2xl" icon="mdi:link"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-600 mb-1">学习天数</p>
+                            <p class="text-3xl font-bold text-orange-600">${data.learning_days}</p>
+                        </div>
+                        <div class="p-2 bg-orange-50 rounded-lg">
+                            <iconify-icon class="text-orange-600 text-2xl" icon="mdi:calendar-clock"></iconify-icon>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 加载知识网络成长轨迹
+        async function loadGrowthTrajectory(period) {
+            try {
+                const response = await fetch(`${API_BASE}/analytics/growth?period=${period}`);
+                const result = await response.json();
+                if (result.success) {
+                    renderGrowthChart(result.data);
+                }
+            } catch (error) {
+                console.error('加载成长轨迹失败:', error);
+            }
+        }
+
+        // 渲染知识网络成长轨迹图表
+        function renderGrowthChart(data) {
+            const chart = echarts.init(document.getElementById('growth-chart'));
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'cross'
+                    }
+                },
+                legend: {
+                    data: ['文档数', '节点数', '关系数']
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: data.labels || []
+                },
+                yAxis: {
+                    type: 'value'
+                },
+                series: [
+                    {
+                        name: '文档数',
+                        type: 'line',
+                        data: data.doc_counts || [],
+                        itemStyle: { color: '#3b82f6' },
+                        smooth: true
+                    },
+                    {
+                        name: '节点数',
+                        type: 'line',
+                        data: data.node_counts || [],
+                        itemStyle: { color: '#10b981' },
+                        smooth: true
+                    },
+                    {
+                        name: '关系数',
+                        type: 'line',
+                        data: data.edge_counts || [],
+                        itemStyle: { color: '#8b5cf6' },
+                        smooth: true
+                    }
+                ]
+            };
+            chart.setOption(option);
+            
+            window.addEventListener('resize', function() {
+                chart.resize();
+            });
         }
 
         // 渲染最近上传的文档
@@ -1589,6 +2013,9 @@
             
             chart.setOption(option);
             
+            // 保存图表实例，用于导出
+            kgState.chartInstance = chart;
+            
             // 添加节点点击事件
             chart.on('click', function(params) {
                 if (params.dataType === 'node') {
@@ -1741,7 +2168,9 @@
         // 搜索知识图谱
         async function searchKnowledgeGraph(query) {
             try {
-                const response = await fetch(`${API_BASE}/knowledge-graph/search?q=${encodeURIComponent(query)}`);
+                const schemeId = kgState.currentSchemeId;
+                const url = `${API_BASE}/knowledge-graph/search?q=${encodeURIComponent(query)}${schemeId ? '&scheme_id=' + schemeId : ''}`;
+                const response = await fetch(url);
                 const result = await response.json();
                 
                 if (result.success) {
@@ -1749,6 +2178,58 @@
                 }
             } catch (error) {
                 console.error('搜索知识图谱失败:', error);
+            }
+        }
+
+        // 导出知识图谱为图片
+        function exportKnowledgeGraph() {
+            // 尝试从DOM获取图表实例（如果kgState中的实例不可用）
+            const chartContainer = document.getElementById('knowledge-graph');
+            if (!chartContainer) {
+                alert('知识图谱容器不存在');
+                return;
+            }
+            
+            let chart = kgState.chartInstance;
+            if (!chart || chart.isDisposed()) {
+                // 尝试从DOM获取实例
+                chart = echarts.getInstanceByDom(chartContainer);
+            }
+            
+            if (!chart || chart.isDisposed()) {
+                alert('知识图谱未加载，请先加载知识图谱');
+                return;
+            }
+            
+            try {
+                // 获取当前方案名称
+                const currentScheme = kgState.schemes.find(s => s.id === kgState.currentSchemeId);
+                const schemeName = currentScheme ? currentScheme.name.replace(/[^\w\s-]/g, '_') : '知识图谱';
+                
+                // 使用ECharts的getDataURL方法导出为PNG图片
+                const url = chart.getDataURL({
+                    type: 'png',
+                    pixelRatio: 2,  // 提高图片清晰度（2倍分辨率）
+                    backgroundColor: '#ffffff'  // 白色背景
+                });
+                
+                if (!url) {
+                    throw new Error('无法生成图片数据');
+                }
+                
+                // 创建下载链接
+                const link = document.createElement('a');
+                link.href = url;
+                const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                link.download = `${schemeName}_知识图谱_${dateStr}.png`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                showNotification('知识图谱导出成功', 'success');
+            } catch (error) {
+                console.error('导出知识图谱失败:', error);
+                showNotification('导出失败：' + (error.message || '未知错误'), 'error');
             }
         }
 
@@ -1780,6 +2261,13 @@
                     trigger: 'axis',
                     axisPointer: {
                         type: 'shadow'
+                    },
+                    formatter: function(params) {
+                        let result = params[0].name + '<br/>';
+                        params.forEach(param => {
+                            result += `${param.seriesName}: ${param.value} 小时<br/>`;
+                        });
+                        return result;
                     }
                 },
                 grid: {
@@ -1807,6 +2295,12 @@
                 }]
             };
             chart.setOption(option);
+            
+            // 显示统计摘要
+            const summaryEl = document.getElementById('study-time-summary');
+            if (summaryEl && data.total_hours !== undefined) {
+                summaryEl.innerHTML = `总时长: ${data.total_hours} 小时 | 平均: ${data.avg_hours} 小时/${data.period === 'week' ? '天' : data.period === 'month' ? '周' : '月'}`;
+            }
             
             // 响应窗口大小变化
             window.addEventListener('resize', function() {
@@ -1851,13 +2345,189 @@
             });
         }
 
+        // 生成学习报告
+        async function generateLearningReport() {
+            try {
+                showNotification('正在生成学习报告...', 'info');
+                const response = await fetch(`${API_BASE}/analytics/report`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    const report = result.data;
+                    displayLearningReport(report);
+                } else {
+                    alert('生成报告失败：' + (result.message || '未知错误'));
+                }
+            } catch (error) {
+                console.error('生成学习报告失败:', error);
+                alert('生成报告失败，请稍后重试');
+            }
+        }
+
+        // 显示学习报告
+        function displayLearningReport(report) {
+            // 创建报告模态框
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+            modal.id = 'report-modal';
+            
+            const reportHtml = `
+                <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center p-6 border-b bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+                        <div>
+                            <h2 class="text-2xl font-bold">学习报告</h2>
+                            <p class="text-sm opacity-90">生成时间: ${new Date(report.generated_at).toLocaleString('zh-CN')}</p>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button id="export-report-btn" class="bg-white text-blue-600 px-4 py-2 rounded-lg hover:bg-gray-100 flex items-center">
+                                <iconify-icon class="mr-2" icon="mdi:download"></iconify-icon>
+                                导出报告
+                            </button>
+                            <button class="close-report-modal text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2">
+                                <iconify-icon icon="mdi:close" class="text-2xl"></iconify-icon>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="p-6 overflow-y-auto flex-1">
+                        <!-- 摘要 -->
+                        <div class="mb-6">
+                            <h3 class="text-xl font-bold mb-4 text-gray-800">学习摘要</h3>
+                            <div class="grid grid-cols-4 gap-4">
+                                <div class="bg-blue-50 rounded-lg p-4">
+                                    <p class="text-sm text-gray-600 mb-1">文档总数</p>
+                                    <p class="text-2xl font-bold text-blue-600">${report.summary.total_documents}</p>
+                                </div>
+                                <div class="bg-green-50 rounded-lg p-4">
+                                    <p class="text-sm text-gray-600 mb-1">知识节点</p>
+                                    <p class="text-2xl font-bold text-green-600">${report.summary.total_knowledge_nodes}</p>
+                                </div>
+                                <div class="bg-purple-50 rounded-lg p-4">
+                                    <p class="text-sm text-gray-600 mb-1">关系数量</p>
+                                    <p class="text-2xl font-bold text-purple-600">${report.summary.total_relationships}</p>
+                                </div>
+                                <div class="bg-orange-50 rounded-lg p-4">
+                                    <p class="text-sm text-gray-600 mb-1">网络密度</p>
+                                    <p class="text-2xl font-bold text-orange-600">${report.summary.knowledge_network_density}</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 节点类型分布 -->
+                        <div class="mb-6">
+                            <h3 class="text-xl font-bold mb-4 text-gray-800">节点类型分布</h3>
+                            <div class="grid grid-cols-4 gap-3">
+                                ${report.node_distribution.map(n => `
+                                    <div class="bg-gray-50 rounded-lg p-3">
+                                        <p class="text-sm text-gray-600">${n.type}</p>
+                                        <p class="text-lg font-bold text-gray-800">${n.count}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <!-- 最近文档 -->
+                        <div class="mb-6">
+                            <h3 class="text-xl font-bold mb-4 text-gray-800">最近上传的文档</h3>
+                            <div class="space-y-2">
+                                ${report.recent_documents.map(doc => `
+                                    <div class="bg-gray-50 rounded-lg p-3 flex justify-between items-center">
+                                        <div>
+                                            <p class="font-medium text-gray-800">${doc.title}</p>
+                                            <p class="text-sm text-gray-600">${doc.type.toUpperCase()} · ${new Date(doc.date).toLocaleDateString('zh-CN')}</p>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <!-- 学习时长统计 -->
+                        <div class="mb-6">
+                            <h3 class="text-xl font-bold mb-4 text-gray-800">最近7天学习时长</h3>
+                            <div class="bg-gray-50 rounded-lg p-4">
+                                <p class="text-lg font-bold text-blue-600 mb-2">总时长: ${report.total_study_hours} 小时</p>
+                                <div class="space-y-1">
+                                    ${report.study_time_week.map(day => `
+                                        <div class="flex justify-between text-sm">
+                                            <span class="text-gray-600">${day.date}</span>
+                                            <span class="font-medium">${day.hours} 小时</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            modal.innerHTML = reportHtml;
+            document.body.appendChild(modal);
+            
+            // 关闭按钮
+            modal.querySelectorAll('.close-report-modal').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.body.removeChild(modal);
+                });
+            });
+            
+            // 导出报告按钮
+            const exportBtn = document.getElementById('export-report-btn');
+            if (exportBtn) {
+                exportBtn.addEventListener('click', () => {
+                    exportReportAsText(report);
+                });
+            }
+            
+            // 点击背景关闭
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    document.body.removeChild(modal);
+                }
+            });
+        }
+
+        // 导出报告为文本文件
+        function exportReportAsText(report) {
+            const reportText = `
+学习报告
+生成时间: ${new Date(report.generated_at).toLocaleString('zh-CN')}
+
+========== 学习摘要 ==========
+文档总数: ${report.summary.total_documents}
+知识节点: ${report.summary.total_knowledge_nodes}
+关系数量: ${report.summary.total_relationships}
+网络密度: ${report.summary.knowledge_network_density}
+
+========== 节点类型分布 ==========
+${report.node_distribution.map(n => `${n.type}: ${n.count}`).join('\n')}
+
+========== 最近上传的文档 ==========
+${report.recent_documents.map(doc => `- ${doc.title} (${doc.type.toUpperCase()}) - ${new Date(doc.date).toLocaleDateString('zh-CN')}`).join('\n')}
+
+========== 最近7天学习时长 ==========
+总时长: ${report.total_study_hours} 小时
+${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n')}
+            `.trim();
+            
+            const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `学习报告_${new Date().toISOString().slice(0, 10)}.txt`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            
+            showNotification('报告导出成功', 'success');
+        }
+
         // 渲染学习预测
         function renderPrediction(data) {
             const container = document.getElementById('prediction-cards');
             container.innerHTML = `
                 <div class="bg-blue-50 rounded-lg p-4">
                     <div class="flex items-center mb-2">
-                        <p class="font-medium">当前进度</p>
+                        <p class="font-medium">总体进度</p>
                         <span class="ml-auto text-2xl font-bold text-blue-600">${data.progress || 42}%</span>
                     </div>
                     <div class="w-full bg-gray-200 rounded-full h-2">
@@ -1866,17 +2536,30 @@
                 </div>
                 <div class="bg-green-50 rounded-lg p-4">
                     <div class="flex items-center mb-2">
-                        <p class="font-medium">预测完成时间</p>
-                        <span class="ml-auto text-2xl font-bold text-green-600">${data.estimated_time || '3.2周'}</span>
+                        <p class="font-medium">文档进度</p>
+                        <span class="ml-auto text-2xl font-bold text-green-600">${data.doc_progress || 0}%</span>
                     </div>
-                    <p class="text-xs text-gray-600">基于当前学习速率预测</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-green-500 h-2 rounded-full" style="width: ${data.doc_progress || 0}%"></div>
+                    </div>
                 </div>
-                <div class="bg-yellow-50 rounded-lg p-4">
+                <div class="bg-purple-50 rounded-lg p-4">
                     <div class="flex items-center mb-2">
-                        <p class="font-medium">建议学习时长</p>
-                        <span class="ml-auto text-2xl font-bold text-yellow-600">${data.recommended_time || '2小时/天'}</span>
+                        <p class="font-medium">节点进度</p>
+                        <span class="ml-auto text-2xl font-bold text-purple-600">${data.node_progress || 0}%</span>
                     </div>
-                    <p class="text-xs text-gray-600">完成目标的建议节奏</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-purple-500 h-2 rounded-full" style="width: ${data.node_progress || 0}%"></div>
+                    </div>
+                </div>
+                <div class="bg-orange-50 rounded-lg p-4">
+                    <div class="flex items-center mb-2">
+                        <p class="font-medium">关系进度</p>
+                        <span class="ml-auto text-2xl font-bold text-orange-600">${data.edge_progress || 0}%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-orange-500 h-2 rounded-full" style="width: ${data.edge_progress || 0}%"></div>
+                    </div>
                 </div>
             `;
 

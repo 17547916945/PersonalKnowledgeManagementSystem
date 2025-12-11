@@ -208,6 +208,40 @@ class DatabaseManager:
                     FOREIGN KEY (document_id) REFERENCES documents(id)
                 )
             ''')
+            
+            # 知识图谱方案表
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS knowledge_graph_schemes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_default BOOLEAN DEFAULT 0
+                )
+            ''')
+            
+            # 为知识节点表添加scheme_id字段
+            try:
+                conn.execute('ALTER TABLE knowledge_nodes ADD COLUMN scheme_id INTEGER')
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略错误
+                pass
+            
+            # 为知识边表添加scheme_id字段
+            try:
+                conn.execute('ALTER TABLE knowledge_edges ADD COLUMN scheme_id INTEGER')
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略错误
+                pass
+            
+            # 创建默认方案（如果不存在）
+            default_scheme = conn.execute('SELECT id FROM knowledge_graph_schemes WHERE is_default = 1').fetchone()
+            if not default_scheme:
+                conn.execute('''
+                    INSERT INTO knowledge_graph_schemes (name, description, is_default)
+                    VALUES ('默认方案', '系统默认的知识图谱方案', 1)
+                ''')
 
 # AI处理类
 class AIProcessor:
@@ -306,21 +340,55 @@ class KnowledgeGraphManager:
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
         self.graph = nx.DiGraph()
+        self.current_scheme_id = None
+        self._load_default_scheme()
         self._load_graph_from_db()
     
-    def _load_graph_from_db(self):
-        """从数据库加载知识图谱
-        只加载来自未删除文档的节点
-        """
+    def _load_default_scheme(self):
+        """加载默认方案ID"""
         try:
             with self.db.get_connection() as conn:
-                # 只加载来自未删除文档的节点（concept类型）
+                default_scheme = conn.execute(
+                    'SELECT id FROM knowledge_graph_schemes WHERE is_default = 1 LIMIT 1'
+                ).fetchone()
+                if default_scheme:
+                    self.current_scheme_id = default_scheme['id']
+                else:
+                    # 如果没有默认方案，获取第一个方案
+                    first_scheme = conn.execute(
+                        'SELECT id FROM knowledge_graph_schemes ORDER BY id LIMIT 1'
+                    ).fetchone()
+                    if first_scheme:
+                        self.current_scheme_id = first_scheme['id']
+        except Exception as e:
+            print(f"加载默认方案时出错: {e}")
+    
+    def set_current_scheme(self, scheme_id: int):
+        """设置当前方案"""
+        self.current_scheme_id = scheme_id
+        self._load_graph_from_db()
+    
+    def _load_graph_from_db(self, scheme_id: int = None):
+        """从数据库加载知识图谱
+        只加载来自未删除文档的节点和指定方案的节点
+        """
+        if scheme_id is None:
+            scheme_id = self.current_scheme_id
+        
+        if scheme_id is None:
+            return
+        
+        try:
+            with self.db.get_connection() as conn:
+                # 加载来自未删除文档的所有类型节点和当前方案的节点
                 nodes = conn.execute('''
                     SELECT kn.* FROM knowledge_nodes kn
                     LEFT JOIN documents d ON kn.document_id = d.id
                     WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
-                    AND kn.node_type = 'concept'
-                ''').fetchall()
+                    AND (kn.scheme_id = ? OR kn.scheme_id IS NULL)
+                ''', (scheme_id,)).fetchall()
+                
+                self.graph.clear()
                 
                 for node in nodes:
                     # sqlite3.Row不支持.get()方法，使用try-except处理可能不存在的字段
@@ -343,8 +411,11 @@ class KnowledgeGraphManager:
                 # 获取有效的节点ID集合
                 valid_node_ids = {node['id'] for node in nodes}
                 
-                # 只加载两个端点都在有效节点集合中的边
-                all_edges = conn.execute('SELECT * FROM knowledge_edges').fetchall()
+                # 只加载两个端点都在有效节点集合中的边，且属于当前方案
+                all_edges = conn.execute('''
+                    SELECT * FROM knowledge_edges 
+                    WHERE (scheme_id = ? OR scheme_id IS NULL)
+                ''', (scheme_id,)).fetchall()
                 for edge in all_edges:
                     if edge['source_id'] in valid_node_ids and edge['target_id'] in valid_node_ids:
                         self.graph.add_edge(edge['source_id'], edge['target_id'],
@@ -356,13 +427,19 @@ class KnowledgeGraphManager:
             import traceback
             traceback.print_exc()
     
-    def add_knowledge_node(self, name: str, node_type: str = 'concept', description: str = None, document_id: int = None) -> int:
+    def add_knowledge_node(self, name: str, node_type: str = 'concept', description: str = None, document_id: int = None, scheme_id: int = None) -> int:
         """添加知识节点（用户手动管理）"""
+        if scheme_id is None:
+            scheme_id = self.current_scheme_id
+        
+        if scheme_id is None:
+            return -1
+        
         try:
             with self.db.get_connection() as conn:
                 cursor = conn.execute(
-                    'INSERT INTO knowledge_nodes (name, node_type, description, document_id) VALUES (?, ?, ?, ?)',
-                    (name, node_type, description, document_id)
+                    'INSERT INTO knowledge_nodes (name, node_type, description, document_id, scheme_id) VALUES (?, ?, ?, ?, ?)',
+                    (name, node_type, description, document_id, scheme_id)
                 )
                 node_id = cursor.lastrowid
 
@@ -383,13 +460,19 @@ class KnowledgeGraphManager:
             return -1
     
     def add_knowledge_edge(self, source_id: int, target_id: int, 
-                          relation_type: str, weight: float = 1.0) -> int:
+                          relation_type: str, weight: float = 1.0, scheme_id: int = None) -> int:
         """添加知识边（关系）"""
+        if scheme_id is None:
+            scheme_id = self.current_scheme_id
+        
+        if scheme_id is None:
+            return -1
+        
         try:
             with self.db.get_connection() as conn:
                 cursor = conn.execute(
-                    'INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight) VALUES (?, ?, ?, ?)',
-                    (source_id, target_id, relation_type, weight)
+                    'INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, scheme_id) VALUES (?, ?, ?, ?, ?)',
+                    (source_id, target_id, relation_type, weight, scheme_id)
                 )
                 edge_id = cursor.lastrowid
                 self.graph.add_edge(source_id, target_id, relation_type=relation_type, weight=weight)
@@ -398,17 +481,23 @@ class KnowledgeGraphManager:
             print(f"添加知识边时出错: {e}")
             return -1
     
-    def get_graph_data(self) -> Dict:
+    def get_graph_data(self, scheme_id: int = None) -> Dict:
         """获取图谱数据用于可视化
-        只返回来自已上传且未删除文件的节点
-        确保每个concept名称只出现一次（去重）
+        返回来自已上传且未删除文件的所有类型节点
+        确保每个节点名称只出现一次（去重）
         """
+        if scheme_id is None:
+            scheme_id = self.current_scheme_id
+        
+        if scheme_id is None:
+            return {'nodes': [], 'edges': []}
+        
         nodes = []
         edges = []
         
-        # 从数据库获取节点信息，按名称去重（对于concept类型）
+        # 从数据库获取节点信息，按名称去重（所有类型）
         with self.db.get_connection() as conn:
-            # 使用GROUP BY确保每个concept名称只出现一次，合并频率
+            # 使用GROUP BY确保每个节点名称只出现一次，合并频率
             db_nodes = conn.execute('''
                 SELECT 
                     MIN(kn.id) as id,
@@ -420,9 +509,9 @@ class KnowledgeGraphManager:
                 FROM knowledge_nodes kn
                 LEFT JOIN documents d ON kn.document_id = d.id
                 WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
-                AND kn.node_type = 'concept'
+                AND (kn.scheme_id = ? OR kn.scheme_id IS NULL)
                 GROUP BY kn.name, kn.node_type
-            ''').fetchall()
+            ''', (scheme_id,)).fetchall()
             
             # 构建节点映射
             name_to_node = {}  # 名称到节点信息的映射
@@ -452,7 +541,7 @@ class KnowledgeGraphManager:
                     'document_id': document_id
                 }
         
-        # 转换节点格式，确保每个concept名称只出现一次
+        # 转换节点格式，确保每个节点名称只出现一次
         for node_name, node_info in name_to_node.items():
             nodes.append({
                 'id': node_info['id'],
@@ -485,10 +574,10 @@ class KnowledgeGraphManager:
                 INNER JOIN knowledge_nodes kn2 ON ke.target_id = kn2.id
                 LEFT JOIN documents d1 ON kn1.document_id = d1.id
                 LEFT JOIN documents d2 ON kn2.document_id = d2.id
-                WHERE kn1.node_type = 'concept' AND kn2.node_type = 'concept'
-                AND (kn1.document_id IS NULL OR d1.is_deleted = 0)
+                WHERE (kn1.document_id IS NULL OR d1.is_deleted = 0)
                 AND (kn2.document_id IS NULL OR d2.is_deleted = 0)
-            ''').fetchall()
+                AND (ke.scheme_id = ? OR ke.scheme_id IS NULL)
+            ''', (scheme_id,)).fetchall()
             
             # 构建边映射，用于去重
             edge_map = {}
@@ -1018,20 +1107,137 @@ def create_app():
     @app.route('/api/knowledge-graph')
     def get_knowledge_graph():
         """获取知识图谱数据"""
-        graph_data = kg_manager.get_graph_data()
+        scheme_id = request.args.get('scheme_id', type=int)
+        graph_data = kg_manager.get_graph_data(scheme_id)
         return jsonify({
             'success': True,
             'data': graph_data,
             'node_count': len(graph_data['nodes']),
-            'edge_count': len(graph_data['edges'])
+            'edge_count': len(graph_data['edges']),
+            'scheme_id': scheme_id or kg_manager.current_scheme_id
+        })
+    
+    # 知识图谱方案管理
+    @app.route('/api/kg/schemes', methods=['GET', 'POST'])
+    def kg_schemes():
+        """获取方案列表或创建新方案"""
+        if request.method == 'GET':
+            with db_manager.get_connection() as conn:
+                rows = conn.execute('''
+                    SELECT * FROM knowledge_graph_schemes 
+                    ORDER BY is_default DESC, created_at DESC
+                ''').fetchall()
+                schemes = [dict(r) for r in rows]
+                return jsonify({
+                    'success': True, 
+                    'data': schemes,
+                    'current_scheme_id': kg_manager.current_scheme_id
+                })
+        else:
+            # 创建新方案
+            data = request.get_json(force=True, silent=True) or {}
+            name = data.get('name', '').strip()
+            description = data.get('description', '').strip()
+            if not name:
+                return jsonify({'success': False, 'message': '方案名称不能为空'}), 400
+            
+            with db_manager.get_connection() as conn:
+                cursor = conn.execute('''
+                    INSERT INTO knowledge_graph_schemes (name, description)
+                    VALUES (?, ?)
+                ''', (name, description))
+                scheme_id = cursor.lastrowid
+                return jsonify({'success': True, 'id': scheme_id, 'scheme_id': scheme_id})
+    
+    @app.route('/api/kg/schemes/<int:scheme_id>', methods=['PUT', 'DELETE'])
+    def kg_scheme_detail(scheme_id):
+        """更新或删除方案"""
+        if request.method == 'PUT':
+            data = request.get_json(force=True, silent=True) or {}
+            fields = []
+            params = []
+            if 'name' in data:
+                fields.append('name = ?')
+                params.append(data.get('name'))
+            if 'description' in data:
+                fields.append('description = ?')
+                params.append(data.get('description'))
+            if not fields:
+                return jsonify({'success': False, 'message': '没有更新字段'}), 400
+            params.append(scheme_id)
+            with db_manager.get_connection() as conn:
+                conn.execute(f'UPDATE knowledge_graph_schemes SET {", ".join(fields)} WHERE id = ?', params)
+            return jsonify({'success': True})
+        else:
+            # 删除方案（同时删除关联的节点和边）
+            with db_manager.get_connection() as conn:
+                # 获取要删除的节点ID
+                node_ids = conn.execute(
+                    'SELECT id FROM knowledge_nodes WHERE scheme_id = ?',
+                    (scheme_id,)
+                ).fetchall()
+                node_id_list = [n['id'] for n in node_ids]
+                
+                # 删除关联的边
+                if node_id_list:
+                    placeholders = ','.join(['?'] * len(node_id_list))
+                    conn.execute(
+                        f'DELETE FROM knowledge_edges WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})',
+                        node_id_list + node_id_list
+                    )
+                
+                # 删除节点
+                conn.execute('DELETE FROM knowledge_nodes WHERE scheme_id = ?', (scheme_id,))
+                
+                # 删除方案
+                conn.execute('DELETE FROM knowledge_graph_schemes WHERE id = ?', (scheme_id,))
+                
+                # 如果删除的是当前方案，切换到默认方案
+                if kg_manager.current_scheme_id == scheme_id:
+                    kg_manager._load_default_scheme()
+                    kg_manager._load_graph_from_db()
+            
+            return jsonify({'success': True})
+    
+    @app.route('/api/kg/schemes/<int:scheme_id>/switch', methods=['POST'])
+    def kg_switch_scheme(scheme_id):
+        """切换当前方案"""
+        with db_manager.get_connection() as conn:
+            scheme = conn.execute(
+                'SELECT id FROM knowledge_graph_schemes WHERE id = ?',
+                (scheme_id,)
+            ).fetchone()
+            if not scheme:
+                return jsonify({'success': False, 'message': '方案不存在'}), 404
+        
+        kg_manager.set_current_scheme(scheme_id)
+        return jsonify({
+            'success': True,
+            'scheme_id': scheme_id,
+            'message': '方案切换成功'
+        })
+    
+    @app.route('/api/kg/current-scheme', methods=['GET'])
+    def kg_current_scheme():
+        """获取当前方案"""
+        return jsonify({
+            'success': True,
+            'scheme_id': kg_manager.current_scheme_id
         })
     
     # 知识图谱：节点列表/创建
     @app.route('/api/kg/nodes', methods=['GET', 'POST'])
     def kg_nodes():
         if request.method == 'GET':
+            scheme_id = request.args.get('scheme_id', type=int) or kg_manager.current_scheme_id
             with db_manager.get_connection() as conn:
-                rows = conn.execute('SELECT * FROM knowledge_nodes ORDER BY id DESC').fetchall()
+                if scheme_id:
+                    rows = conn.execute(
+                        'SELECT * FROM knowledge_nodes WHERE scheme_id = ? OR scheme_id IS NULL ORDER BY id DESC',
+                        (scheme_id,)
+                    ).fetchall()
+                else:
+                    rows = conn.execute('SELECT * FROM knowledge_nodes ORDER BY id DESC').fetchall()
                 return jsonify({'success': True, 'data': [dict(r) for r in rows]})
         else:
             data = request.get_json(force=True, silent=True) or {}
@@ -1039,9 +1245,12 @@ def create_app():
             node_type = (data.get('type') or 'concept').strip() or 'concept'
             description = data.get('description')
             document_id = data.get('document_id')
+            scheme_id = data.get('scheme_id') or kg_manager.current_scheme_id
             if not name:
                 return jsonify({'success': False, 'message': '节点名称不能为空'}), 400
-            node_id = kg_manager.add_knowledge_node(name, node_type, description, document_id)
+            if not scheme_id:
+                return jsonify({'success': False, 'message': '请先选择一个方案'}), 400
+            node_id = kg_manager.add_knowledge_node(name, node_type, description, document_id, scheme_id)
             kg_manager._load_graph_from_db()
             return jsonify({'success': True, 'id': node_id})
 
@@ -1082,8 +1291,15 @@ def create_app():
     @app.route('/api/kg/edges', methods=['GET', 'POST'])
     def kg_edges():
         if request.method == 'GET':
+            scheme_id = request.args.get('scheme_id', type=int) or kg_manager.current_scheme_id
             with db_manager.get_connection() as conn:
-                rows = conn.execute('SELECT * FROM knowledge_edges ORDER BY id DESC').fetchall()
+                if scheme_id:
+                    rows = conn.execute(
+                        'SELECT * FROM knowledge_edges WHERE scheme_id = ? OR scheme_id IS NULL ORDER BY id DESC',
+                        (scheme_id,)
+                    ).fetchall()
+                else:
+                    rows = conn.execute('SELECT * FROM knowledge_edges ORDER BY id DESC').fetchall()
                 return jsonify({'success': True, 'data': [dict(r) for r in rows]})
         else:
             data = request.get_json(force=True, silent=True) or {}
@@ -1097,12 +1313,10 @@ def create_app():
                 weight = float(data.get('weight', 1.0))
             except (TypeError, ValueError):
                 weight = 1.0
-            with db_manager.get_connection() as conn:
-                cursor = conn.execute(
-                    'INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight) VALUES (?, ?, ?, ?)',
-                    (source_id, target_id, relation_type, weight)
-                )
-                edge_id = cursor.lastrowid
+            scheme_id = data.get('scheme_id') or kg_manager.current_scheme_id
+            if not scheme_id:
+                return jsonify({'success': False, 'message': '请先选择一个方案'}), 400
+            edge_id = kg_manager.add_knowledge_edge(source_id, target_id, relation_type, weight, scheme_id)
             kg_manager._load_graph_from_db()
             return jsonify({'success': True, 'id': edge_id})
 
@@ -1121,39 +1335,75 @@ def create_app():
 
     @app.route('/api/knowledge-graph/search')
     def search_knowledge_graph():
-        """搜索知识图谱"""
+        """搜索知识图谱
+        搜索节点时，显示与该节点建立了关系的节点以及它们之间的关系
+        """
         query = request.args.get('q', '')
+        scheme_id = request.args.get('scheme_id', type=int)
         if not query:
             return jsonify({'success': False, 'message': '搜索关键词不能为空'}), 400
     
         try:
             # 获取完整的图谱数据
-            graph_data = kg_manager.get_graph_data()
+            graph_data = kg_manager.get_graph_data(scheme_id)
         
-            # 过滤包含搜索词的节点（不区分大小写）
-            filtered_nodes = [
+            # 第一步：过滤包含搜索词的节点（不区分大小写）
+            matched_nodes = [
                 node for node in graph_data['nodes'] 
                 if query.lower() in node['name'].lower() or 
                 (node.get('description') and query.lower() in node['description'].lower())
             ]
         
-            # 获取过滤后节点的ID集合（统一转换为字符串）
-            filtered_node_ids = {str(node['id']) for node in filtered_nodes}
+            # 获取匹配节点的ID集合（统一转换为字符串）
+            matched_node_ids = {str(node['id']) for node in matched_nodes}
             
-            # 过滤相关的边（源节点或目标节点在过滤后的节点中）
-            filtered_edges = [
+            # 如果没有匹配的节点，返回空结果
+            if not matched_node_ids:
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'nodes': [],
+                        'edges': []
+                    },
+                    'original_count': len(graph_data['nodes']),
+                    'filtered_count': 0,
+                    'related_count': 0
+                })
+            
+            # 第二步：找到所有与匹配节点有关系的边
+            related_edges = [
                 edge for edge in graph_data['edges'] 
-                if str(edge['source']) in filtered_node_ids or str(edge['target']) in filtered_node_ids
+                if str(edge['source']) in matched_node_ids or str(edge['target']) in matched_node_ids
+            ]
+            
+            # 第三步：收集所有相关节点的ID（包括匹配节点和与它们有关系的节点）
+            related_node_ids = set(matched_node_ids)
+            for edge in related_edges:
+                related_node_ids.add(str(edge['source']))
+                related_node_ids.add(str(edge['target']))
+            
+            # 第四步：获取所有相关节点的完整信息
+            all_related_nodes = [
+                node for node in graph_data['nodes']
+                if str(node['id']) in related_node_ids
+            ]
+            
+            # 第五步：获取所有相关节点之间的关系（包括相关节点之间的边）
+            # 过滤边：只保留两个端点都在相关节点集合中的边
+            final_edges = [
+                edge for edge in graph_data['edges']
+                if str(edge['source']) in related_node_ids and str(edge['target']) in related_node_ids
             ]
         
             return jsonify({
                 'success': True,
                 'data': {
-                    'nodes': filtered_nodes,
-                    'edges': filtered_edges
+                    'nodes': all_related_nodes,
+                    'edges': final_edges
                 },
                 'original_count': len(graph_data['nodes']),
-                'filtered_count': len(filtered_nodes)
+                'matched_count': len(matched_nodes),
+                'related_count': len(all_related_nodes) - len(matched_nodes)
             })
         
         except Exception as e:
@@ -1233,56 +1483,118 @@ def create_app():
     
     @app.route('/api/analytics/study-time')
     def get_study_time():
-        """获取学习时长统计"""
+        """获取学习时长统计（基于真实用户行为数据）"""
         period = request.args.get('period', 'week')
+        user_id = request.args.get('user_id', '1')
         
-        # 根据时间段生成模拟数据（实际应用中应从数据库查询）
-        if period == 'week':
-            labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
-            # 基于文档创建时间生成学习时长
-            with db_manager.get_connection() as conn:
-                docs = conn.execute(
-                    'SELECT created_at FROM documents WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 7'
-                ).fetchall()
+        with db_manager.get_connection() as conn:
+            if period == 'week':
+                # 获取最近7天的学习时长
+                labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
                 values = []
-                for i in range(7):
-                    if i < len(docs):
-                        # 根据文档数量估算学习时长（小时）
-                        values.append(round(0.5 + (len(docs) - i) * 0.3, 1))
+                from datetime import datetime, timedelta
+                today = datetime.now().date()
+                
+                for i in range(6, -1, -1):  # 从6天前到今天
+                    target_date = today - timedelta(days=i)
+                    start_time = datetime.combine(target_date, datetime.min.time())
+                    end_time = datetime.combine(target_date, datetime.max.time())
+                    
+                    # 查询该天的学习时长（秒转小时）
+                    result = conn.execute('''
+                        SELECT COALESCE(SUM(duration), 0) as total_duration
+                        FROM user_behaviors
+                        WHERE user_id = ? 
+                        AND timestamp >= ? AND timestamp < ?
+                        AND action_type IN ('view', 'read', 'study')
+                    ''', (user_id, start_time.isoformat(), end_time.isoformat())).fetchone()
+                    
+                    hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
+                    values.append(hours)
+                    
+            elif period == 'month':
+                # 获取最近4周的学习时长
+                labels = [f'第{i}周' for i in range(1, 5)]
+                values = []
+                from datetime import datetime, timedelta
+                today = datetime.now().date()
+                
+                for i in range(3, -1, -1):  # 最近4周
+                    week_start = today - timedelta(days=today.weekday() + 7 * i)
+                    week_end = week_start + timedelta(days=6)
+                    start_time = datetime.combine(week_start, datetime.min.time())
+                    end_time = datetime.combine(week_end, datetime.max.time())
+                    
+                    result = conn.execute('''
+                        SELECT COALESCE(SUM(duration), 0) as total_duration
+                        FROM user_behaviors
+                        WHERE user_id = ? 
+                        AND timestamp >= ? AND timestamp <= ?
+                        AND action_type IN ('view', 'read', 'study')
+                    ''', (user_id, start_time.isoformat(), end_time.isoformat())).fetchone()
+                    
+                    hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
+                    values.append(hours)
+                    
+            else:  # quarter
+                # 获取最近3个月的学习时长
+                labels = ['第1月', '第2月', '第3月']
+                values = []
+                from datetime import datetime, timedelta
+                
+                today = datetime.now()
+                for i in range(2, -1, -1):  # 最近3个月
+                    # 计算月份开始和结束
+                    month = today.month - i
+                    year = today.year
+                    if month <= 0:
+                        month += 12
+                        year -= 1
+                    
+                    month_start = datetime(year, month, 1)
+                    if month == 12:
+                        month_end = datetime(year + 1, 1, 1) - timedelta(days=1)
                     else:
-                        values.append(round(0.5 + (7 - i) * 0.2, 1))
-        elif period == 'month':
-            labels = [f'第{i}周' for i in range(1, 5)]
-            with db_manager.get_connection() as conn:
-                total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
-                avg_per_week = total_docs / 4 if total_docs > 0 else 1
-                values = [round(avg_per_week * 0.5 + i * 0.3, 1) for i in range(4)]
-        else:  # quarter
-            labels = ['第1月', '第2月', '第3月']
-            with db_manager.get_connection() as conn:
-                total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
-                avg_per_month = total_docs / 3 if total_docs > 0 else 1
-                values = [round(avg_per_month * 0.8 + i * 0.5, 1) for i in range(3)]
+                        month_end = datetime(year, month + 1, 1) - timedelta(days=1)
+                    
+                    if i == 0:
+                        month_end = today
+                    
+                    result = conn.execute('''
+                        SELECT COALESCE(SUM(duration), 0) as total_duration
+                        FROM user_behaviors
+                        WHERE user_id = ? 
+                        AND timestamp >= ? AND timestamp <= ?
+                        AND action_type IN ('view', 'read', 'study')
+                    ''', (user_id, month_start.isoformat(), month_end.isoformat())).fetchone()
+                    
+                    hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
+                    values.append(hours)
+            
+            # 计算总时长和平均时长
+            total_hours = sum(values)
+            avg_hours = round(total_hours / len(values), 1) if values else 0.0
         
         return jsonify({
             'success': True,
             'data': {
                 'labels': labels,
                 'values': values,
-                'period': period
+                'period': period,
+                'total_hours': total_hours,
+                'avg_hours': avg_hours
             }
         })
     
     @app.route('/api/analytics/knowledge-level')
     def get_knowledge_level():
-        """获取知识点掌握分布（只统计来自已上传文件的concept）"""
+        """获取知识点掌握分布（统计来自已上传文件的所有类型节点）"""
         with db_manager.get_connection() as conn:
-            # 只统计来自未删除文档的concept节点
+            # 统计来自未删除文档的所有类型节点
             total_nodes = conn.execute('''
                 SELECT COUNT(*) FROM knowledge_nodes kn
                 LEFT JOIN documents d ON kn.document_id = d.id
                 WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
-                AND kn.node_type = 'concept'
             ''').fetchone()[0]
             
             # 简化的掌握度计算（实际应用中需要更复杂的算法）
@@ -1315,22 +1627,26 @@ def create_app():
         """获取学习进展预测"""
         with db_manager.get_connection() as conn:
             total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
-            # 只统计来自未删除文档的concept节点
+            # 统计来自未删除文档的所有类型节点
             total_nodes = conn.execute('''
                 SELECT COUNT(*) FROM knowledge_nodes kn
                 LEFT JOIN documents d ON kn.document_id = d.id
                 WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
-                AND kn.node_type = 'concept'
             ''').fetchone()[0]
             
+            # 统计关系数量
+            total_edges = conn.execute('SELECT COUNT(*) FROM knowledge_edges').fetchone()[0]
+            
             # 简化的预测算法
-            # 假设目标：100个文档，200个知识点
+            # 假设目标：100个文档，200个知识点，300个关系
             target_docs = 100
             target_nodes = 200
+            target_edges = 300
             
             doc_progress = min(100, int((total_docs / target_docs) * 100)) if target_docs > 0 else 0
             node_progress = min(100, int((total_nodes / target_nodes) * 100)) if target_nodes > 0 else 0
-            overall_progress = int((doc_progress + node_progress) / 2)
+            edge_progress = min(100, int((total_edges / target_edges) * 100)) if target_edges > 0 else 0
+            overall_progress = int((doc_progress + node_progress + edge_progress) / 3)
             
             # 计算预测完成时间（基于当前进度和学习速度）
             if overall_progress > 0:
@@ -1348,8 +1664,10 @@ def create_app():
                 recommendations.append('增加文档上传频次，建立知识库基础')
             if total_nodes < 20:
                 recommendations.append('系统会自动从文档中提取关键词，建议上传更多相关文档')
-            if total_docs > 0 and total_nodes > 0:
+            if total_edges < 30:
                 recommendations.append('建立更多知识点之间的关联，完善知识网络')
+            if total_docs > 0 and total_nodes > 0 and total_edges == 0:
+                recommendations.append('为知识点建立关联关系，形成知识网络')
             if not recommendations:
                 recommendations = [
                     '保持当前学习节奏',
@@ -1361,10 +1679,293 @@ def create_app():
             'success': True,
             'data': {
                 'progress': overall_progress,
+                'doc_progress': doc_progress,
+                'node_progress': node_progress,
+                'edge_progress': edge_progress,
                 'estimated_time': estimated_time,
                 'recommended_time': '2小时/天',
                 'recommendations': recommendations[:3]  # 最多3条建议
             }
+        })
+    
+    @app.route('/api/analytics/progress')
+    def get_learning_progress():
+        """获取学习进度跟踪"""
+        with db_manager.get_connection() as conn:
+            # 获取文档统计
+            total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
+            
+            # 获取节点统计（按类型分组）
+            nodes_by_type = conn.execute('''
+                SELECT node_type, COUNT(*) as count
+                FROM knowledge_nodes kn
+                LEFT JOIN documents d ON kn.document_id = d.id
+                WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                GROUP BY node_type
+            ''').fetchall()
+            
+            # 获取关系统计
+            total_edges = conn.execute('SELECT COUNT(*) FROM knowledge_edges').fetchone()[0]
+            
+            # 获取最近的学习活动
+            recent_activities = conn.execute('''
+                SELECT action_type, COUNT(*) as count, MAX(timestamp) as last_time
+                FROM user_behaviors
+                WHERE action_type IN ('view', 'read', 'study', 'upload')
+                GROUP BY action_type
+                ORDER BY last_time DESC
+                LIMIT 5
+            ''').fetchall()
+            
+            # 计算学习天数
+            first_doc = conn.execute('''
+                SELECT MIN(created_at) as first_date
+                FROM documents
+                WHERE is_deleted = 0
+            ''').fetchone()
+            
+            learning_days = 0
+            if first_doc and first_doc['first_date']:
+                from datetime import datetime
+                try:
+                    if isinstance(first_doc['first_date'], str):
+                        first_date = datetime.fromisoformat(first_doc['first_date'].replace('Z', '+00:00'))
+                    else:
+                        first_date = first_doc['first_date']
+                    learning_days = (datetime.now() - first_date).days + 1
+                except:
+                    learning_days = 1
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'total_docs': total_docs,
+                'total_nodes': sum(n['count'] for n in nodes_by_type),
+                'nodes_by_type': [{'type': n['node_type'], 'count': n['count']} for n in nodes_by_type],
+                'total_edges': total_edges,
+                'learning_days': learning_days,
+                'recent_activities': [{'type': a['action_type'], 'count': a['count'], 'last_time': a['last_time']} for a in recent_activities]
+            }
+        })
+    
+    @app.route('/api/analytics/growth')
+    def get_knowledge_growth():
+        """获取知识网络成长轨迹"""
+        period = request.args.get('period', 'month')  # month, week, day
+        with db_manager.get_connection() as conn:
+            from datetime import datetime, timedelta
+            
+            if period == 'day':
+                # 最近30天的成长轨迹
+                labels = []
+                node_counts = []
+                edge_counts = []
+                doc_counts = []
+                
+                for i in range(29, -1, -1):
+                    target_date = datetime.now().date() - timedelta(days=i)
+                    date_str = target_date.strftime('%m-%d')
+                    labels.append(date_str)
+                    
+                    # 统计到该日期为止的累计数量
+                    end_time = datetime.combine(target_date, datetime.max.time())
+                    
+                    node_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM knowledge_nodes kn
+                        LEFT JOIN documents d ON kn.document_id = d.id
+                        WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                        AND kn.created_at <= ?
+                    ''', (end_time.isoformat(),)).fetchone()[0]
+                    
+                    edge_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM knowledge_edges
+                        WHERE created_at <= ?
+                    ''', (end_time.isoformat(),)).fetchone()[0]
+                    
+                    doc_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM documents
+                        WHERE is_deleted = 0 AND created_at <= ?
+                    ''', (end_time.isoformat(),)).fetchone()[0]
+                    
+                    node_counts.append(node_count)
+                    edge_counts.append(edge_count)
+                    doc_counts.append(doc_count)
+                    
+            elif period == 'week':
+                # 最近12周的成长轨迹
+                labels = []
+                node_counts = []
+                edge_counts = []
+                doc_counts = []
+                
+                today = datetime.now().date()
+                for i in range(11, -1, -1):
+                    week_start = today - timedelta(days=today.weekday() + 7 * i)
+                    week_end = week_start + timedelta(days=6)
+                    labels.append(f'{week_start.strftime("%m-%d")}')
+                    
+                    end_time = datetime.combine(week_end, datetime.max.time())
+                    
+                    node_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM knowledge_nodes kn
+                        LEFT JOIN documents d ON kn.document_id = d.id
+                        WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                        AND kn.created_at <= ?
+                    ''', (end_time.isoformat(),)).fetchone()[0]
+                    
+                    edge_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM knowledge_edges
+                        WHERE created_at <= ?
+                    ''', (end_time.isoformat(),)).fetchone()[0]
+                    
+                    doc_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM documents
+                        WHERE is_deleted = 0 AND created_at <= ?
+                    ''', (end_time.isoformat(),)).fetchone()[0]
+                    
+                    node_counts.append(node_count)
+                    edge_counts.append(edge_count)
+                    doc_counts.append(doc_count)
+                    
+            else:  # month
+                # 最近12个月的成长轨迹
+                labels = []
+                node_counts = []
+                edge_counts = []
+                doc_counts = []
+                
+                today = datetime.now()
+                for i in range(11, -1, -1):
+                    month = today.month - i
+                    year = today.year
+                    if month <= 0:
+                        month += 12
+                        year -= 1
+                    
+                    labels.append(f'{year}-{month:02d}')
+                    
+                    if month == 12:
+                        month_end = datetime(year + 1, 1, 1) - timedelta(days=1)
+                    else:
+                        month_end = datetime(year, month + 1, 1) - timedelta(days=1)
+                    
+                    if i == 0:
+                        month_end = today
+                    
+                    node_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM knowledge_nodes kn
+                        LEFT JOIN documents d ON kn.document_id = d.id
+                        WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                        AND kn.created_at <= ?
+                    ''', (month_end.isoformat(),)).fetchone()[0]
+                    
+                    edge_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM knowledge_edges
+                        WHERE created_at <= ?
+                    ''', (month_end.isoformat(),)).fetchone()[0]
+                    
+                    doc_count = conn.execute('''
+                        SELECT COUNT(*) as count
+                        FROM documents
+                        WHERE is_deleted = 0 AND created_at <= ?
+                    ''', (month_end.isoformat(),)).fetchone()[0]
+                    
+                    node_counts.append(node_count)
+                    edge_counts.append(edge_count)
+                    doc_counts.append(doc_count)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'labels': labels,
+                'node_counts': node_counts,
+                'edge_counts': edge_counts,
+                'doc_counts': doc_counts,
+                'period': period
+            }
+        })
+    
+    @app.route('/api/analytics/report')
+    def generate_learning_report():
+        """生成学习报告"""
+        report_type = request.args.get('type', 'full')  # full, summary, detailed
+        with db_manager.get_connection() as conn:
+            from datetime import datetime
+            
+            # 基础统计
+            total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
+            total_nodes = conn.execute('''
+                SELECT COUNT(*) FROM knowledge_nodes kn
+                LEFT JOIN documents d ON kn.document_id = d.id
+                WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+            ''').fetchone()[0]
+            total_edges = conn.execute('SELECT COUNT(*) FROM knowledge_edges').fetchone()[0]
+            
+            # 节点类型分布
+            nodes_by_type = conn.execute('''
+                SELECT node_type, COUNT(*) as count
+                FROM knowledge_nodes kn
+                LEFT JOIN documents d ON kn.document_id = d.id
+                WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                GROUP BY node_type
+            ''').fetchall()
+            
+            # 最近活动
+            recent_docs = conn.execute('''
+                SELECT title, created_at, file_type
+                FROM documents
+                WHERE is_deleted = 0
+                ORDER BY created_at DESC
+                LIMIT 5
+            ''').fetchall()
+            
+            # 学习时长统计（最近7天）
+            from datetime import timedelta
+            study_time_data = []
+            for i in range(6, -1, -1):
+                target_date = datetime.now().date() - timedelta(days=i)
+                start_time = datetime.combine(target_date, datetime.min.time())
+                end_time = datetime.combine(target_date, datetime.max.time())
+                
+                result = conn.execute('''
+                    SELECT COALESCE(SUM(duration), 0) as total_duration
+                    FROM user_behaviors
+                    WHERE timestamp >= ? AND timestamp < ?
+                    AND action_type IN ('view', 'read', 'study')
+                ''', (start_time.isoformat(), end_time.isoformat())).fetchone()
+                
+                hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
+                study_time_data.append({
+                    'date': target_date.strftime('%Y-%m-%d'),
+                    'hours': hours
+                })
+            
+            # 生成报告
+            report = {
+                'generated_at': datetime.now().isoformat(),
+                'summary': {
+                    'total_documents': total_docs,
+                    'total_knowledge_nodes': total_nodes,
+                    'total_relationships': total_edges,
+                    'knowledge_network_density': round(total_edges / total_nodes, 2) if total_nodes > 0 else 0
+                },
+                'node_distribution': [{'type': n['node_type'], 'count': n['count']} for n in nodes_by_type],
+                'recent_documents': [{'title': d['title'], 'date': d['created_at'], 'type': d['file_type']} for d in recent_docs],
+                'study_time_week': study_time_data,
+                'total_study_hours': round(sum(s['hours'] for s in study_time_data), 1)
+            }
+        
+        return jsonify({
+            'success': True,
+            'data': report
         })
     
     @app.route('/api/documents/<int:doc_id>')
@@ -1437,15 +2038,15 @@ def create_app():
                 
                 # 2. 获取要删除的知识节点ID（用于从内存图中移除）
                 node_ids_to_delete = conn.execute(
-                    'SELECT id FROM knowledge_nodes WHERE document_id = ? AND node_type = ?',
-                    (doc_id, 'concept')
+                    'SELECT id FROM knowledge_nodes WHERE document_id = ?',
+                    (doc_id,)
                 ).fetchall()
                 node_ids = [node['id'] for node in node_ids_to_delete]
                 
-                # 3. 删除关联的知识节点（只删除concept类型的节点）
+                # 3. 删除关联的知识节点（所有类型）
                 conn.execute(
-                    'DELETE FROM knowledge_nodes WHERE document_id = ? AND node_type = ?',
-                    (doc_id, 'concept')
+                    'DELETE FROM knowledge_nodes WHERE document_id = ?',
+                    (doc_id,)
                 )
                 deleted_nodes = conn.rowcount
                 if deleted_nodes > 0:
