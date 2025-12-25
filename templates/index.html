@@ -51,13 +51,27 @@
         </div>
         <div class="flex items-center space-x-4">
             <div class="relative">
-                <iconify-icon class="text-gray-600 text-2xl" icon="mdi:bell-outline"></iconify-icon>
-                <div class="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></div>
-            </div>
-            <div class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center overflow-hidden">
+                <!-- 用户信息区域（可点击） -->
+                <div id="user-info" class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 rounded-lg px-2 py-1 transition-colors">
+                    <div id="user-avatar" class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center overflow-hidden">
+                        <iconify-icon class="text-gray-600 text-lg" icon="mdi:account"></iconify-icon>
+                    </div>
+                    <span id="user-name" class="text-gray-700 font-medium">加载中...</span>
+                    <iconify-icon class="text-gray-500 text-sm" icon="mdi:chevron-down"></iconify-icon>
+                </div>
                 
+                <!-- 用户菜单下拉框 -->
+                <div id="user-menu" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                    <button id="switch-account-btn" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center">
+                        <iconify-icon class="mr-2 text-gray-500" icon="mdi:account-switch"></iconify-icon>
+                        切换账号
+                    </button>
+                    <button id="logout-btn" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center">
+                        <iconify-icon class="mr-2" icon="mdi:logout"></iconify-icon>
+                        退出登录
+                    </button>
+                </div>
             </div>
-            <span class="text-gray-700 font-medium">李晓明</span>
         </div>
     </nav>
 
@@ -152,10 +166,10 @@
                         
                         <!-- 拖拽上传区域 -->
                         <div id="upload-area" class="upload-area rounded-lg p-8 text-center cursor-pointer mb-4">
-                            <input type="file" id="file-upload" class="hidden" accept=".txt,.md,.pdf,.docx,.doc" multiple>
+                            <input type="file" id="file-upload" class="hidden" accept=".txt,.md,.pdf,.docx,.doc,.ppt,.pptx" multiple>
                             <iconify-icon class="text-4xl text-gray-400 mb-3" icon="mdi:cloud-upload"></iconify-icon>
                             <p class="text-gray-600 mb-1">点击选择文件或拖拽文件到此处</p>
-                            <p class="text-sm text-gray-500">支持格式: TXT, MD, PDF, DOCX, DOC</p>
+                            <p class="text-sm text-gray-500">支持格式: TXT, MD, PDF, DOCX, DOC, PPT, PPTX</p>
                             <p class="text-sm text-gray-500">单个文件最大16MB</p>
                         </div>
                         
@@ -456,9 +470,113 @@
             currentQuery: '',
             searchResults: []
         };
+        
+        // 加载当前用户信息
+        async function loadCurrentUser() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/check`, {
+                    credentials: 'same-origin'
+                });
+                const result = await response.json();
+                
+                if (result.success && result.authenticated) {
+                    const userNameEl = document.getElementById('user-name');
+                    const userAvatarEl = document.getElementById('user-avatar');
+                    
+                    if (userNameEl && result.user) {
+                        // 更新用户名
+                        userNameEl.textContent = result.user.username || '用户';
+                        
+                        // 更新头像（显示用户名首字母）
+                        if (userAvatarEl && result.user.username) {
+                            const firstChar = result.user.username.charAt(0).toUpperCase();
+                            userAvatarEl.innerHTML = `<span class="text-gray-700 font-semibold text-sm">${firstChar}</span>`;
+                            userAvatarEl.classList.remove('bg-gray-300');
+                            userAvatarEl.classList.add('bg-blue-100');
+                        }
+                    }
+                } else {
+                    // 未登录，重定向到登录页
+                    window.location.href = '/login';
+                }
+            } catch (error) {
+                console.error('加载用户信息失败:', error);
+                // 如果加载失败，保持默认显示
+            }
+        }
+
+        // 初始化用户菜单
+        function initUserMenu() {
+            const userInfo = document.getElementById('user-info');
+            const userMenu = document.getElementById('user-menu');
+            const logoutBtn = document.getElementById('logout-btn');
+            const switchAccountBtn = document.getElementById('switch-account-btn');
+            
+            if (!userInfo || !userMenu) return;
+            
+            // 点击用户信息区域切换菜单显示
+            userInfo.addEventListener('click', function(e) {
+                e.stopPropagation();
+                userMenu.classList.toggle('hidden');
+            });
+            
+            // 点击页面其他地方关闭菜单
+            document.addEventListener('click', function(e) {
+                if (!userInfo.contains(e.target) && !userMenu.contains(e.target)) {
+                    userMenu.classList.add('hidden');
+                }
+            });
+            
+            // 退出登录
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', async function() {
+                    try {
+                        const response = await fetch(`${API_BASE}/auth/logout`, {
+                            method: 'POST',
+                            credentials: 'same-origin'
+                        });
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            // 清除本地状态
+                            window.location.href = '/login';
+                        } else {
+                            alert('退出登录失败: ' + (result.message || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('退出登录失败:', error);
+                        // 即使请求失败，也跳转到登录页
+                        window.location.href = '/login';
+                    }
+                });
+            }
+            
+            // 切换账号
+            if (switchAccountBtn) {
+                switchAccountBtn.addEventListener('click', async function() {
+                    // 先退出登录，然后跳转到登录页
+                    try {
+                        await fetch(`${API_BASE}/auth/logout`, {
+                            method: 'POST',
+                            credentials: 'same-origin'
+                        });
+                    } catch (error) {
+                        console.error('退出登录失败:', error);
+                    }
+                    // 跳转到登录页
+                    window.location.href = '/login';
+                });
+            }
+        }
 
         // 视图切换功能
         document.addEventListener('DOMContentLoaded', function() {
+            // 加载当前用户信息
+            loadCurrentUser();
+            
+            // 初始化用户菜单
+            initUserMenu();
+            
             // 初始化各视图数据
             initializeDashboard();
             initializeDocuments();
@@ -490,7 +608,10 @@
                         
                         // 根据视图类型初始化数据
                         if (viewType === 'analytics') {
-                            initializeAnalytics();
+                            // 延迟初始化，确保视图已显示
+                            setTimeout(() => {
+                                initializeAnalytics();
+                            }, 100);
                         } else if (viewType === 'knowledge-graph') {
                             // 切换到知识图谱时刷新数据和图
                             loadKgSchemes().then(() => {
@@ -1036,7 +1157,9 @@
                 'pdf': 0,
                 'docx': 0,
                 'md': 0,
-                'doc': 0
+                'doc': 0,
+                'ppt': 0,
+                'pptx': 0
             };
             
             documents.forEach(doc => {
@@ -1046,18 +1169,27 @@
                 }
             });
             
+            // 合并ppt和pptx的数量
+            const pptTotal = categoryCounts['ppt'] + categoryCounts['pptx'];
+            
             // 分类标签配置
             const categories = [
                 { key: 'all', label: '全部', icon: 'mdi:file-multiple', color: 'blue' },
                 { key: 'txt', label: '文本文件', icon: 'mdi:file-document', color: 'green' },
                 { key: 'pdf', label: 'PDF文档', icon: 'mdi:file-pdf', color: 'red' },
-                { key: 'docx', label: 'Word文档', icon: 'mdi:file-word', color: 'blue' },
-                { key: 'doc', label: 'Word文档', icon: 'mdi:file-word', color: 'blue' },
-                { key: 'md', label: 'Markdown', icon: 'mdi:markdown', color: 'purple' }
+                { key: 'docx', label: 'Word文档（.docx）', icon: 'mdi:file-word', color: 'blue' },
+                { key: 'doc', label: 'Word文档（.doc）', icon: 'mdi:file-word', color: 'blue' },
+                { key: 'md', label: 'Markdown', icon: 'mdi:markdown', color: 'purple' },
+                { key: 'ppt', label: 'PPT', icon: 'mdi:file-powerpoint', color: 'orange' }
             ];
             
             container.innerHTML = categories.map(cat => {
-                const count = categoryCounts[cat.key] || 0;
+                // 对于PPT分类，显示合并后的数量（ppt + pptx）
+                let count = categoryCounts[cat.key] || 0;
+                if (cat.key === 'ppt') {
+                    count = pptTotal;
+                }
+                
                 const isActive = categoryFilter.currentCategory === cat.key;
                 
                 // 使用完整的类名，避免Tailwind动态类名问题
@@ -1068,7 +1200,8 @@
                         'blue': 'bg-blue-600 text-white',
                         'green': 'bg-green-600 text-white',
                         'red': 'bg-red-600 text-white',
-                        'purple': 'bg-purple-600 text-white'
+                        'purple': 'bg-purple-600 text-white',
+                        'orange': 'bg-orange-600 text-white'
                     };
                     bgColorClass = activeColors[cat.color] || 'bg-blue-600 text-white';
                     textColorClass = '';
@@ -1111,7 +1244,8 @@
                 'pdf': 'red',
                 'docx': 'blue',
                 'doc': 'blue',
-                'md': 'purple'
+                'md': 'purple',
+                'ppt': 'orange'
             };
             
             buttons.forEach(btn => {
@@ -1136,7 +1270,8 @@
                         'blue': 'bg-blue-600 text-white',
                         'green': 'bg-green-600 text-white',
                         'red': 'bg-red-600 text-white',
-                        'purple': 'bg-purple-600 text-white'
+                        'purple': 'bg-purple-600 text-white',
+                        'orange': 'bg-orange-600 text-white'
                     };
                     btn.className += ' ' + (activeClasses[color] || 'bg-blue-600 text-white');
                 } else {
@@ -1171,6 +1306,10 @@
                 
                 filteredDocs = sourceDocs.filter(doc => {
                     const fileType = doc.file_type ? doc.file_type.toLowerCase() : '';
+                    // 如果选择的是PPT分类，同时显示ppt和pptx文件
+                    if (categoryFilter.currentCategory === 'ppt') {
+                        return fileType === 'ppt' || fileType === 'pptx';
+                    }
                     return fileType === categoryFilter.currentCategory;
                 });
             }
@@ -1507,6 +1646,12 @@
         // 初始化学习分析
         async function initializeAnalytics() {
             try {
+                // 检查视图是否可见
+                const analyticsView = document.getElementById('analytics-view');
+                if (!analyticsView || analyticsView.classList.contains('hidden')) {
+                    return; // 视图不可见，不初始化
+                }
+                
                 // 加载学习进度概览
                 await loadProgressOverview();
                 
@@ -1514,18 +1659,27 @@
                 const timeResponse = await fetch(`${API_BASE}/analytics/study-time?period=week`);
                 const timeResult = await timeResponse.json();
                 if (timeResult.success) {
-                    renderStudyTimeChart(timeResult.data);
+                    // 延迟渲染，确保DOM已准备好
+                    setTimeout(() => {
+                        renderStudyTimeChart(timeResult.data);
+                    }, 50);
+                } else {
+                    console.error('加载学习时长统计失败:', timeResult.message);
                 }
 
                 // 加载知识点掌握分布
                 const levelResponse = await fetch(`${API_BASE}/analytics/knowledge-level`);
                 const levelResult = await levelResponse.json();
                 if (levelResult.success) {
-                    renderKnowledgeLevelChart(levelResult.data);
+                    setTimeout(() => {
+                        renderKnowledgeLevelChart(levelResult.data);
+                    }, 50);
+                } else {
+                    console.error('加载知识点掌握分布失败:', levelResult.message);
                 }
 
                 // 加载知识网络成长轨迹
-                await loadGrowthTrajectory('month');
+                await loadGrowthTrajectory('day');
 
                 // 加载学习预测
                 const predictionResponse = await fetch(`${API_BASE}/analytics/prediction`);
@@ -1610,7 +1764,12 @@
                 const response = await fetch(`${API_BASE}/analytics/growth?period=${period}`);
                 const result = await response.json();
                 if (result.success) {
-                    renderGrowthChart(result.data);
+                    // 延迟渲染，确保DOM已准备好
+                    setTimeout(() => {
+                        renderGrowthChart(result.data);
+                    }, 50);
+                } else {
+                    console.error('加载成长轨迹失败:', result.message);
                 }
             } catch (error) {
                 console.error('加载成长轨迹失败:', error);
@@ -1619,7 +1778,19 @@
 
         // 渲染知识网络成长轨迹图表
         function renderGrowthChart(data) {
-            const chart = echarts.init(document.getElementById('growth-chart'));
+            const chartElement = document.getElementById('growth-chart');
+            if (!chartElement) {
+                console.error('找不到知识网络成长轨迹图表容器');
+                return;
+            }
+            
+            // 如果图表已存在，先销毁
+            const existingChart = echarts.getInstanceByDom(chartElement);
+            if (existingChart) {
+                existingChart.dispose();
+            }
+            
+            const chart = echarts.init(chartElement);
             const option = {
                 tooltip: {
                     trigger: 'axis',
@@ -1670,9 +1841,10 @@
             };
             chart.setOption(option);
             
-            window.addEventListener('resize', function() {
-                chart.resize();
-            });
+            // 响应窗口大小变化
+            const resizeHandler = () => chart.resize();
+            window.removeEventListener('resize', resizeHandler);
+            window.addEventListener('resize', resizeHandler);
         }
 
         // 渲染最近上传的文档
@@ -1721,7 +1893,9 @@
                 'docx': 'mdi:file-word',
                 'doc': 'mdi:file-word',
                 'txt': 'mdi:file-document',
-                'md': 'mdi:markdown'
+                'md': 'mdi:markdown',
+                'ppt': 'mdi:file-powerpoint',
+                'pptx': 'mdi:file-powerpoint'
             };
             
             const fileIcon = fileIcons[doc.file_type] || 'mdi:file';
@@ -1743,7 +1917,12 @@
                 `;
             } else {
                 div.innerHTML = `
-                    <div class="absolute top-2 right-2 z-10">
+                    <div class="absolute top-2 right-2 z-10 flex space-x-2">
+                        <button class="download-doc-btn bg-blue-500 hover:bg-blue-600 text-white rounded-full p-2 shadow-lg transition-colors" 
+                                onclick="event.stopPropagation(); downloadDocument(${doc.id}, '${doc.title.replace(/'/g, "\\'")}')" 
+                                title="下载文档">
+                            <iconify-icon icon="mdi:download" class="text-lg"></iconify-icon>
+                        </button>
                         <button class="delete-doc-btn bg-red-500 hover:bg-red-600 text-white rounded-full p-2 shadow-lg transition-colors" 
                                 onclick="event.stopPropagation(); deleteDocument(${doc.id}, '${doc.title.replace(/'/g, "\\'")}')" 
                                 title="删除文档">
@@ -1773,6 +1952,18 @@
             }
             
             return div;
+        }
+
+        // 下载文档
+        function downloadDocument(docId, docTitle) {
+            // 创建下载链接
+            const downloadUrl = `${API_BASE}/documents/${docId}/download`;
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = docTitle;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         // 删除文档
@@ -2332,7 +2523,19 @@
 
         // 渲染学习时长图表
         function renderStudyTimeChart(data) {
-            const chart = echarts.init(document.getElementById('study-time-chart'));
+            const chartElement = document.getElementById('study-time-chart');
+            if (!chartElement) {
+                console.error('找不到学习时长图表容器');
+                return;
+            }
+            
+            // 如果图表已存在，先销毁
+            const existingChart = echarts.getInstanceByDom(chartElement);
+            if (existingChart) {
+                existingChart.dispose();
+            }
+            
+            const chart = echarts.init(chartElement);
             const option = {
                 tooltip: {
                     trigger: 'axis',
@@ -2376,18 +2579,31 @@
             // 显示统计摘要
             const summaryEl = document.getElementById('study-time-summary');
             if (summaryEl && data.total_hours !== undefined) {
-                summaryEl.innerHTML = `总时长: ${data.total_hours} 小时 | 平均: ${data.avg_hours} 小时/${data.period === 'week' ? '天' : data.period === 'month' ? '周' : '月'}`;
+                const periodText = data.period === 'week' ? '天' : data.period === 'month' ? '周' : '月';
+                summaryEl.innerHTML = `总时长: ${data.total_hours} 小时 | 平均: ${data.avg_hours} 小时/${periodText}`;
             }
             
             // 响应窗口大小变化
-            window.addEventListener('resize', function() {
-                chart.resize();
-            });
+            const resizeHandler = () => chart.resize();
+            window.removeEventListener('resize', resizeHandler); // 先移除旧的监听器
+            window.addEventListener('resize', resizeHandler);
         }
 
         // 渲染知识点掌握分布图表
         function renderKnowledgeLevelChart(data) {
-            const chart = echarts.init(document.getElementById('knowledge-level-chart'));
+            const chartElement = document.getElementById('knowledge-level-chart');
+            if (!chartElement) {
+                console.error('找不到知识点掌握分布图表容器');
+                return;
+            }
+            
+            // 如果图表已存在，先销毁
+            const existingChart = echarts.getInstanceByDom(chartElement);
+            if (existingChart) {
+                existingChart.dispose();
+            }
+            
+            const chart = echarts.init(chartElement);
             const option = {
                 tooltip: {
                     trigger: 'item'
@@ -2417,9 +2633,9 @@
             chart.setOption(option);
             
             // 响应窗口大小变化
-            window.addEventListener('resize', function() {
-                chart.resize();
-            });
+            const resizeHandler = () => chart.resize();
+            window.removeEventListener('resize', resizeHandler);
+            window.addEventListener('resize', resizeHandler);
         }
 
         // 生成学习报告

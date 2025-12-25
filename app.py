@@ -17,13 +17,15 @@ import hashlib
 import mimetypes
 
 # 第三方库导入
-from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, session, redirect, url_for
 from flask_cors import CORS
+from functools import wraps
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
 import requests
+import hashlib as hash_lib
 
 # 导入配置文件
 try:
@@ -47,6 +49,21 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
     print("警告：未安装python-docx，Word文档处理功能将受限")
+
+# 尝试导入textract库（支持多种格式，包括.doc）
+try:
+    import textract
+    TEXTTRACT_AVAILABLE = True
+except ImportError:
+    TEXTTRACT_AVAILABLE = False
+    print("提示：未安装textract库，.doc格式文档处理功能将受限")
+
+# 尝试导入win32com（Windows系统支持.doc格式）
+try:
+    import win32com.client
+    WIN32COM_AVAILABLE = True
+except ImportError:
+    WIN32COM_AVAILABLE = False
 
 # 配置类
 class Config:
@@ -100,7 +117,7 @@ class DocumentProcessor:
     
     @staticmethod
     def extract_text_from_docx(file_path: str) -> str:
-        """从Word文档提取内容"""
+        """从Word文档(.docx)提取内容"""
         if not DOCX_AVAILABLE:
             return "[Word文档处理功能需要安装python-docx库]"
         
@@ -111,23 +128,76 @@ class DocumentProcessor:
             return f"[Word文档处理错误: {str(e)}]"
     
     @staticmethod
+    def extract_text_from_doc(file_path: str) -> str:
+        """从Word文档(.doc)提取内容（旧格式）"""
+        # 方法1: 尝试使用textract
+        if TEXTTRACT_AVAILABLE:
+            try:
+                text = textract.process(file_path).decode('utf-8')
+                if text and text.strip():
+                    return text
+            except Exception as e:
+                print(f"textract处理失败: {e}")
+        
+        # 方法2: 尝试使用win32com (Windows)
+        if WIN32COM_AVAILABLE:
+            try:
+                word = win32com.client.Dispatch("Word.Application")
+                word.Visible = False
+                # 转换为绝对路径
+                abs_path = os.path.abspath(file_path)
+                doc = word.Documents.Open(abs_path)
+                text = doc.Content.Text
+                doc.Close(False)  # False表示不保存
+                word.Quit()
+                if text and text.strip():
+                    return text
+            except Exception as e:
+                print(f"win32com处理失败: {e}")
+                try:
+                    # 确保Word应用被关闭
+                    word.Quit()
+                except:
+                    pass
+        
+        # 如果都不可用，返回友好的提示信息
+        return "[.doc格式文档需要特殊处理库。\n\n解决方案：\n1. 安装textract库: pip install textract\n2. 或在Windows系统上安装pywin32: pip install pywin32\n3. 或将文档转换为.docx格式后重新上传\n\n注意：.doc是旧版Word格式，python-docx库无法处理。]"
+    
+    @staticmethod
     def extract_text_from_md(file_path: str) -> str:
         """从Markdown文件提取内容"""
         return DocumentProcessor.extract_text_from_txt(file_path)
     
     @staticmethod
-    def extract_text(file_path: str, file_type: str) -> str:
+    def extract_text_from_ppt(file_path: str) -> str:
+        """从PPT文件提取内容（暂不支持文本提取）"""
+        return "[PPT文件暂不支持文本提取，仅支持上传和下载]"
+    
+    @staticmethod
+    def extract_text(file_path: str, file_type: str = None) -> str:
         """根据文件类型提取文本内容"""
-        file_type = file_type.lower()
+        # 如果未提供file_type，从文件路径自动判断
+        if not file_type:
+            file_type = os.path.splitext(file_path)[1][1:].lower()
+        else:
+            file_type = file_type.lower()
+        
+        # 确保文件存在
+        if not os.path.exists(file_path):
+            return f"[文件不存在: {file_path}]"
         
         if file_type in ['txt', 'text']:
             return DocumentProcessor.extract_text_from_txt(file_path)
         elif file_type == 'pdf':
             return DocumentProcessor.extract_text_from_pdf(file_path)
-        elif file_type in ['docx', 'doc']:
+        elif file_type == 'docx':
             return DocumentProcessor.extract_text_from_docx(file_path)
+        elif file_type == 'doc':
+            return DocumentProcessor.extract_text_from_doc(file_path)
         elif file_type in ['md', 'markdown']:
             return DocumentProcessor.extract_text_from_md(file_path)
+        elif file_type in ['ppt', 'pptx']:
+            return DocumentProcessor.extract_text_from_ppt(file_path)
         else:
             return f"[不支持的文件格式: {file_type}]"
 
@@ -203,16 +273,29 @@ class DatabaseManager:
                 )
             ''')
             
+            # 用户表
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP
+                )
+            ''')
+            
             # 用户行为表
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_behaviors (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
                     document_id INTEGER,
                     action_type TEXT NOT NULL,  -- view, edit, search, etc.
                     duration INTEGER,  -- 操作持续时间（秒）
                     details TEXT,  -- JSON格式存储详细信息
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id),
                     FOREIGN KEY (document_id) REFERENCES documents(id)
                 )
             ''')
@@ -1086,10 +1169,40 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
     app.config['JSON_AS_ASCII'] = False
+    app.config['SESSION_COOKIE_SECURE'] = False  # 开发环境设为False，生产环境应设为True
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     Config.init_app(app)
     
     # 启用CORS
     CORS(app)
+    
+    # 认证装饰器
+    def login_required(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if 'user_id' not in session:
+                # 如果是 API 请求，返回 JSON 错误
+                if request.path.startswith('/api/'):
+                    return jsonify({
+                        'success': False,
+                        'message': '请先登录',
+                        'requires_login': True
+                    }), 401
+                # 否则重定向到登录页
+                return redirect(url_for('login'))
+            return f(*args, **kwargs)
+        return decorated_function
+    
+    # 密码哈希函数
+    def hash_password(password: str) -> str:
+        """生成密码哈希"""
+        return hash_lib.sha256(password.encode('utf-8')).hexdigest()
+    
+    # 验证密码
+    def verify_password(password: str, password_hash: str) -> bool:
+        """验证密码"""
+        return hash_password(password) == password_hash
     
     # 初始化各个管理器
     db_manager = DatabaseManager(Config.DATABASE_PATH)
@@ -1100,15 +1213,204 @@ def create_app():
     
     # 注册路由
     @app.route('/')
+    @login_required
     def index():
         """主页"""
         return render_template('index.html')
+    
+    @app.route('/login')
+    def login():
+        """登录页面"""
+        # 如果已登录，重定向到主页
+        if 'user_id' in session:
+            return redirect(url_for('index'))
+        return render_template('login.html')
+    
+    @app.route('/register')
+    def register():
+        """注册页面"""
+        # 如果已登录，重定向到主页
+        if 'user_id' in session:
+            return redirect(url_for('index'))
+        return render_template('register.html')
+    
+    @app.route('/api/auth/login', methods=['POST'])
+    def api_login():
+        """登录API"""
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            username = data.get('username', '').strip()
+            password = data.get('password', '').strip()
+            
+            if not username or not password:
+                return jsonify({
+                    'success': False,
+                    'message': '用户名和密码不能为空'
+                }), 400
+            
+            with db_manager.get_connection() as conn:
+                # 查找用户（支持用户名或邮箱登录）
+                user = conn.execute('''
+                    SELECT id, username, email, password_hash 
+                    FROM users 
+                    WHERE username = ? OR email = ?
+                ''', (username, username)).fetchone()
+                
+                if not user:
+                    return jsonify({
+                        'success': False,
+                        'message': '用户名或密码错误'
+                    }), 401
+                
+                # 验证密码
+                if not verify_password(password, user['password_hash']):
+                    return jsonify({
+                        'success': False,
+                        'message': '用户名或密码错误'
+                    }), 401
+                
+                # 更新最后登录时间
+                conn.execute('''
+                    UPDATE users 
+                    SET last_login = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                ''', (user['id'],))
+                conn.commit()
+                
+                # 设置会话
+                session['user_id'] = user['id']
+                session['username'] = user['username']
+                session['email'] = user['email']
+                
+                return jsonify({
+                    'success': True,
+                    'message': '登录成功',
+                    'user': {
+                        'id': user['id'],
+                        'username': user['username'],
+                        'email': user['email']
+                    }
+                })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'登录失败: {str(e)}'
+            }), 500
+    
+    @app.route('/api/auth/register', methods=['POST'])
+    def api_register():
+        """注册API"""
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            username = data.get('username', '').strip()
+            email = data.get('email', '').strip()
+            password = data.get('password', '').strip()
+            
+            # 验证输入
+            if not username or not email or not password:
+                return jsonify({
+                    'success': False,
+                    'message': '所有字段都不能为空'
+                }), 400
+            
+            if len(password) < 6:
+                return jsonify({
+                    'success': False,
+                    'message': '密码至少需要6个字符'
+                }), 400
+            
+            # 验证邮箱格式
+            import re
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            if not re.match(email_pattern, email):
+                return jsonify({
+                    'success': False,
+                    'message': '邮箱格式不正确'
+                }), 400
+            
+            with db_manager.get_connection() as conn:
+                # 检查用户名是否已存在
+                existing_user = conn.execute('''
+                    SELECT id FROM users WHERE username = ?
+                ''', (username,)).fetchone()
+                
+                if existing_user:
+                    return jsonify({
+                        'success': False,
+                        'message': '用户名已存在'
+                    }), 400
+                
+                # 检查邮箱是否已存在
+                existing_email = conn.execute('''
+                    SELECT id FROM users WHERE email = ?
+                ''', (email,)).fetchone()
+                
+                if existing_email:
+                    return jsonify({
+                        'success': False,
+                        'message': '邮箱已被注册'
+                    }), 400
+                
+                # 创建新用户
+                password_hash = hash_password(password)
+                cursor = conn.execute('''
+                    INSERT INTO users (username, email, password_hash)
+                    VALUES (?, ?, ?)
+                ''', (username, email, password_hash))
+                conn.commit()
+                
+                user_id = cursor.lastrowid
+                
+                return jsonify({
+                    'success': True,
+                    'message': '注册成功',
+                    'user': {
+                        'id': user_id,
+                        'username': username,
+                        'email': email
+                    }
+                })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'注册失败: {str(e)}'
+            }), 500
+    
+    @app.route('/api/auth/logout', methods=['POST'])
+    @login_required
+    def api_logout():
+        """登出API"""
+        session.clear()
+        return jsonify({
+            'success': True,
+            'message': '已登出'
+        })
+    
+    @app.route('/api/auth/check', methods=['GET'])
+    def api_check_auth():
+        """检查认证状态"""
+        if 'user_id' in session:
+            return jsonify({
+                'success': True,
+                'authenticated': True,
+                'user': {
+                    'id': session.get('user_id'),
+                    'username': session.get('username'),
+                    'email': session.get('email')
+                }
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'authenticated': False
+            })
         
     @app.route('/static/<path:filename>')
     def serve_static(filename):
         return send_from_directory('static', filename)
     
     @app.route('/api/documents', methods=['GET', 'POST'])
+    @login_required
     def handle_documents():
         """文档管理API"""
         if request.method == 'GET':
@@ -1141,7 +1443,7 @@ def create_app():
                 # 检查文件类型
                 filename = file.filename
                 file_ext = os.path.splitext(filename)[1][1:].lower()
-                allowed_types = ['txt', 'md', 'pdf', 'docx', 'doc']
+                allowed_types = ['txt', 'md', 'pdf', 'docx', 'doc', 'ppt', 'pptx']
                 
                 if file_ext not in allowed_types:
                     return jsonify({
@@ -1235,6 +1537,7 @@ def create_app():
 
     
     @app.route('/api/search')
+    @login_required
     def search():
         """搜索API"""
         query = request.args.get('q', '')
@@ -1250,6 +1553,7 @@ def create_app():
         })
     
     @app.route('/api/knowledge-graph')
+    @login_required
     def get_knowledge_graph():
         """获取知识图谱数据"""
         scheme_id = request.args.get('scheme_id', type=int)
@@ -1627,10 +1931,11 @@ def create_app():
         })
     
     @app.route('/api/analytics/study-time')
+    @login_required
     def get_study_time():
         """获取学习时长统计（基于真实用户行为数据）"""
         period = request.args.get('period', 'week')
-        user_id = request.args.get('user_id', '1')
+        user_id = session.get('user_id', 1)
         
         with db_manager.get_connection() as conn:
             if period == 'week':
@@ -1649,7 +1954,7 @@ def create_app():
                     result = conn.execute('''
                         SELECT COALESCE(SUM(duration), 0) as total_duration
                         FROM user_behaviors
-                        WHERE user_id = ? 
+                        WHERE user_id = ?
                         AND timestamp >= ? AND timestamp < ?
                         AND action_type IN ('view', 'read', 'study')
                     ''', (user_id, start_time.isoformat(), end_time.isoformat())).fetchone()
@@ -2116,41 +2421,124 @@ def create_app():
     @app.route('/api/documents/<int:doc_id>')
     def get_document_detail(doc_id):
         """获取文档详情"""
-        with db_manager.get_connection() as conn:
-            doc = conn.execute(
-                'SELECT * FROM documents WHERE id = ? AND is_deleted = 0',
-                (doc_id,)
-            ).fetchone()
-            
-            if not doc:
-                return jsonify({'success': False, 'message': '文档不存在'}), 404
-            
-            # 读取完整内容
-            try:
-                full_content = doc_manager.doc_processor.extract_text(doc['file_path'], doc['file_type'])
-            except:
-                full_content = doc['content']
-            
-            doc_dict = dict(doc)
-            doc_dict['full_content'] = full_content
-            
-            # 解析JSON字段
-            if doc_dict.get('tags'):
-                try:
-                    doc_dict['tags'] = json.loads(doc_dict['tags'])
-                except:
+        try:
+            with db_manager.get_connection() as conn:
+                doc = conn.execute(
+                    'SELECT * FROM documents WHERE id = ? AND is_deleted = 0',
+                    (doc_id,)
+                ).fetchone()
+                
+                if not doc:
+                    return jsonify({'success': False, 'message': '文档不存在'}), 404
+                
+                # 读取完整内容
+                full_content = None
+                # 首先尝试从文件重新提取
+                if doc['file_path'] and os.path.exists(doc['file_path']):
+                    try:
+                        # 从文件路径自动判断文件类型，确保正确
+                        actual_file_type = os.path.splitext(doc['file_path'])[1][1:].lower()
+                        extracted_content = doc_manager.doc_processor.extract_text(doc['file_path'], actual_file_type)
+                        
+                        # 如果提取的内容不是错误信息（不以[开头），则使用它
+                        if extracted_content and not extracted_content.strip().startswith('['):
+                            full_content = extracted_content
+                        else:
+                            # 如果提取失败，尝试使用数据库中存储的内容
+                            print(f"文件提取返回错误信息: {extracted_content[:100]}")
+                    except Exception as e:
+                        print(f"从文件提取内容失败: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # 如果提取失败，使用数据库中存储的内容
+                if not full_content:
+                    stored_content = doc['content'] or ''
+                    # 如果存储的内容也是错误信息，尝试重新处理
+                    if stored_content.startswith('[') and doc['file_path'] and os.path.exists(doc['file_path']):
+                        # 对于.doc文件，提供更友好的提示
+                        actual_file_type = os.path.splitext(doc['file_path'])[1][1:].lower()
+                        if actual_file_type == 'doc':
+                            full_content = "[.doc格式文档需要特殊处理库。建议：\n1. 安装textract库: pip install textract\n2. 或在Windows系统上安装pywin32: pip install pywin32\n3. 或将文档转换为.docx格式]"
+                        else:
+                            full_content = stored_content
+                    else:
+                        full_content = stored_content or '无内容'
+                
+                doc_dict = dict(doc)
+                doc_dict['full_content'] = full_content
+                
+                # 解析JSON字段
+                if doc_dict.get('tags'):
+                    try:
+                        doc_dict['tags'] = json.loads(doc_dict['tags'])
+                    except:
+                        doc_dict['tags'] = []
+                else:
                     doc_dict['tags'] = []
-            
-            if doc_dict.get('metadata'):
-                try:
-                    doc_dict['metadata'] = json.loads(doc_dict['metadata'])
-                except:
+                
+                if doc_dict.get('metadata'):
+                    try:
+                        doc_dict['metadata'] = json.loads(doc_dict['metadata'])
+                    except:
+                        doc_dict['metadata'] = {}
+                else:
                     doc_dict['metadata'] = {}
-            
+                
+                return jsonify({
+                    'success': True,
+                    'data': doc_dict
+                })
+        except Exception as e:
+            print(f"获取文档详情失败: {e}")
+            import traceback
+            traceback.print_exc()
             return jsonify({
-                'success': True,
-                'data': doc_dict
-            })
+                'success': False,
+                'message': f'获取文档详情失败: {str(e)}'
+            }), 500
+    
+    @app.route('/api/documents/<int:doc_id>/download')
+    @login_required
+    def download_document(doc_id):
+        """下载文档"""
+        try:
+            with db_manager.get_connection() as conn:
+                doc = conn.execute(
+                    'SELECT file_path, title, file_type FROM documents WHERE id = ? AND is_deleted = 0',
+                    (doc_id,)
+                ).fetchone()
+                
+                if not doc:
+                    return jsonify({
+                        'success': False,
+                        'message': '文档不存在'
+                    }), 404
+                
+                file_path = doc['file_path']
+                
+                if not file_path or not os.path.exists(file_path):
+                    return jsonify({
+                        'success': False,
+                        'message': '文件不存在'
+                    }), 404
+                
+                # 获取原始文件名或使用标题
+                original_filename = doc['title']
+                if not original_filename.endswith('.' + doc['file_type']):
+                    original_filename = f"{original_filename}.{doc['file_type']}"
+                
+                return send_file(
+                    file_path,
+                    as_attachment=True,
+                    download_name=original_filename,
+                    mimetype='application/octet-stream'
+                )
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'下载失败: {str(e)}'
+            }), 500
     
     @app.route('/api/documents/<int:doc_id>', methods=['DELETE'])
     def delete_document(doc_id):
@@ -2189,27 +2577,40 @@ def create_app():
                 node_ids = [node['id'] for node in node_ids_to_delete]
                 
                 # 3. 删除关联的知识节点（所有类型）
-                conn.execute(
+                cursor = conn.execute(
                     'DELETE FROM knowledge_nodes WHERE document_id = ?',
                     (doc_id,)
                 )
-                deleted_nodes = conn.rowcount
+                deleted_nodes = cursor.rowcount
                 if deleted_nodes > 0:
                     print(f"已删除 {deleted_nodes} 个关联的知识节点")
                 
                 # 4. 删除关联的知识边（如果源节点或目标节点被删除）
                 if node_ids:
                     placeholders = ','.join(['?'] * len(node_ids))
-                    conn.execute(
+                    cursor = conn.execute(
                         f'DELETE FROM knowledge_edges WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})',
                         node_ids + node_ids
                     )
+                    deleted_edges = cursor.rowcount
+                    if deleted_edges > 0:
+                        print(f"已删除 {deleted_edges} 条关联的知识边")
                 
-                # 5. 删除数据库中的记录（包括哈希值）
-                conn.execute(
+                # 5. 删除数据库中的记录（硬删除：彻底从数据库中删除）
+                cursor = conn.execute(
                     'DELETE FROM documents WHERE id = ?',
                     (doc_id,)
                 )
+                deleted_doc = cursor.rowcount
+                
+                if deleted_doc == 0:
+                    return jsonify({
+                        'success': False,
+                        'message': '文档删除失败，记录不存在'
+                    }), 404
+                
+                # 提交事务，确保所有删除操作生效
+                conn.commit()
                 
                 print(f"已删除文档记录 ID: {doc_id}, 哈希值: {hash_value}")
                 
@@ -2221,9 +2622,12 @@ def create_app():
                 
             return jsonify({
                 'success': True,
-                'message': '文档已删除'
+                'message': '文档已彻底删除'
             })
         except Exception as e:
+            print(f"删除文档时发生错误: {e}")
+            import traceback
+            traceback.print_exc()
             return jsonify({
                 'success': False,
                 'message': f'删除失败: {str(e)}'
