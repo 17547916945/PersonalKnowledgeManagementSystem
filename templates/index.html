@@ -1072,7 +1072,7 @@
         // 加载推荐内容
         async function loadRecommendations() {
             try {
-                const response = await fetch(`${API_BASE}/recommendations/1`);
+                const response = await fetch(`${API_BASE}/recommendations`);
                 const result = await response.json();
                 
                 if (result.success && result.data.length > 0) {
@@ -1094,22 +1094,42 @@
             const container = document.getElementById('recommendations-container');
             container.innerHTML = '';
             
-            recommendations.slice(0, 3).forEach(rec => {
+            if (!recommendations || recommendations.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 text-center py-4">暂无推荐内容，上传更多文档后系统会为您推荐相关内容</p>';
+                return;
+            }
+            
+            recommendations.slice(0, 4).forEach(rec => {
                 const recCard = document.createElement('div');
-                recCard.className = 'bg-blue-50 rounded-lg p-4 mb-3 border border-blue-100';
+                recCard.className = 'bg-blue-50 rounded-lg p-4 mb-3 border border-blue-100 flex items-start justify-between';
+                
+                const tags = rec.recommended_document.tags ? (() => {
+                    try {
+                        const parsed = JSON.parse(rec.recommended_document.tags);
+                        return Array.isArray(parsed) ? parsed.slice(0, 3) : [];
+                    } catch {
+                        return [];
+                    }
+                })() : [];
+                
+                const scorePercent = Math.round((rec.score || 0) * 100);
+                
                 recCard.innerHTML = `
-                    <div class="flex items-start justify-between">
-                        <div class="flex-1">
-                            <h4 class="font-medium text-gray-800 mb-1">${rec.recommended_document.title}</h4>
-                            <p class="text-sm text-gray-600 mb-2">${rec.reason}</p>
-                            <div class="flex items-center text-xs text-gray-500">
-                                <span>来源: ${rec.source_document.title}</span>
-                            </div>
+                    <div class="flex-1">
+                        <div class="flex items-center mb-1">
+                            <h4 class="font-medium text-gray-800 mr-3 truncate">${rec.recommended_document.title}</h4>
+                            <span class="text-xs px-2 py-0.5 rounded-full bg-blue-600 text-white">${scorePercent} 分</span>
                         </div>
-                        <button class="ml-4 text-blue-600 hover:text-blue-700" onclick="showDocumentDetail(${rec.recommended_document.id})">
-                            <iconify-icon icon="mdi:arrow-right" class="text-xl"></iconify-icon>
-                        </button>
+                        <p class="text-sm text-gray-600 mb-2 line-clamp-2">${rec.reason}</p>
+                        <div class="flex flex-wrap items-center text-xs text-gray-500 gap-2">
+                            <span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">来源：${rec.source_document.title}</span>
+                            ${tags.map(tag => `<span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">#${tag}</span>`).join('')}
+                        </div>
                     </div>
+                    <button class="ml-4 text-blue-600 hover:text-blue-700 flex items-center text-sm whitespace-nowrap" onclick="showDocumentDetail(${rec.recommended_document.id})">
+                        <span class="mr-1">去学习</span>
+                        <iconify-icon icon="mdi:arrow-right" class="text-lg"></iconify-icon>
+                    </button>
                 `;
                 container.appendChild(recCard);
             });

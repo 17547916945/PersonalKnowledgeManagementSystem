@@ -1948,15 +1948,16 @@ def create_app():
                 'message': f'搜索出错: {str(e)}'
             }), 500
     
-    @app.route('/api/recommendations/<int:user_id>', defaults={'user_id': 1})
-    @app.route('/api/recommendations/<int:user_id>')
-    def get_recommendations(user_id):
-        """获取个性化推荐"""
-        # 简化处理：基于用户最近的文档推荐相似的文档
-        # 实际应用中需要更复杂的推荐算法
+    @app.route('/api/recommendations')
+    @login_required
+    def get_recommendations():
+        """获取个性化推荐（概览模块“为您推荐”）"""
+        # 简化处理：基于当前用户最近的文档推荐相似的文档
+        # 实际应用中可以接入更复杂的推荐算法或模型
+        user_id = session.get('user_id', 1)
         
         with db_manager.get_connection() as conn:
-            # 获取用户最近的文档
+            # 获取用户最近浏览/学习的文档
             recent_docs = conn.execute('''
                 SELECT * FROM documents 
                 WHERE id IN (
@@ -1966,12 +1967,12 @@ def create_app():
             ''', (str(user_id),)).fetchall()
             
             if not recent_docs:
-                # 如果没有用户行为，推荐最新的文档
+                # 如果没有用户行为，退化为推荐最新上传的文档
                 recent_docs = conn.execute(
                     'SELECT * FROM documents WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 5'
                 ).fetchall()
             
-            # 基于关键词推荐相似文档
+            # 基于标签推荐相似文档
             recommendations = []
             for doc in recent_docs:
                 if doc['tags']:
@@ -1988,16 +1989,30 @@ def create_app():
                                 recommendations.append({
                                     'source_document': dict(doc),
                                     'recommended_document': dict(similar_doc),
-                                    'reason': f'基于关键词 "{tag}" 推荐',
+                                    'reason': f'基于关键词「{tag}」为你推荐',
                                     'score': 0.8  # 简化的相似度评分
                                 })
-                    except:
+                    except Exception:
                         continue
+            
+            # 如果仍然没有推荐结果，则给出兜底：取最新的几篇文档
+            if not recommendations:
+                fallback_docs = conn.execute(
+                    'SELECT * FROM documents WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 3'
+                ).fetchall()
+                for doc in fallback_docs:
+                    recommendations.append({
+                        'source_document': dict(doc),
+                        'recommended_document': dict(doc),
+                        'reason': '为你推荐最新上传的文档',
+                        'score': 0.5
+                    })
             
             return jsonify({
                 'success': True,
                 'data': recommendations[:10],  # 限制推荐数量
-                'based_on_documents': len(recent_docs)
+                'based_on_documents': len(recent_docs),
+                'user_id': user_id
             })
     
     @app.route('/api/system-info')
