@@ -449,12 +449,6 @@
                     <div class="grid grid-cols-4 gap-4" id="prediction-cards">
                         <!-- 预测数据将通过JavaScript动态加载 -->
                     </div>
-                    <div class="mt-6">
-                        <h4 class="font-medium text-gray-800 mb-2">优化建议</h4>
-                        <ul class="space-y-2 text-sm" id="recommendations-list">
-                            <!-- 建议将通过JavaScript动态加载 -->
-                        </ul>
-                    </div>
                 </div>
             </div>
         </main>
@@ -2856,19 +2850,7 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
                 </div>
             `;
 
-            // 渲染建议列表
-            const recommendationsList = document.getElementById('recommendations-list');
-            const recommendations = data.recommendations || [
-                '增加机器学习相关文档的学习频次',
-                '每周三晚上专注数学概念学习效率最高',
-                '建立更多神经网络与数学概念的关联'
-            ];
-            recommendationsList.innerHTML = recommendations.map(rec => `
-                <li class="flex">
-                    <iconify-icon class="text-green-500 mr-2" icon="mdi:check-circle"></iconify-icon>
-                    <span>${rec}</span>
-                </li>
-            `).join('');
+
         }
 
         // AI学习助手相关功能

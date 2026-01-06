@@ -2107,23 +2107,6 @@ def create_app():
                 estimated_time = f'{estimated_weeks}周'
             else:
                 estimated_time = '4周'
-            
-            # 生成建议
-            recommendations = []
-            if total_docs < 10:
-                recommendations.append('增加文档上传频次，建立知识库基础')
-            if total_nodes < 20:
-                recommendations.append('系统会自动从文档中提取关键词，建议上传更多相关文档')
-            if total_edges < 30:
-                recommendations.append('建立更多知识点之间的关联，完善知识网络')
-            if total_docs > 0 and total_nodes > 0 and total_edges == 0:
-                recommendations.append('为知识点建立关联关系，形成知识网络')
-            if not recommendations:
-                recommendations = [
-                    '保持当前学习节奏',
-                    '定期复习已学知识点',
-                    '探索新的知识领域'
-                ]
         
         return jsonify({
             'success': True,
@@ -2133,8 +2116,7 @@ def create_app():
                 'node_progress': node_progress,
                 'edge_progress': edge_progress,
                 'estimated_time': estimated_time,
-                'recommended_time': '2小时/天',
-                'recommendations': recommendations[:3]  # 最多3条建议
+                'recommended_time': '2小时/天'
             }
         })
     
