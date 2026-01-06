@@ -478,6 +478,91 @@
         // API基础URL
         const API_BASE = '/api';
         
+        // ========== 页面在线时长追踪 ==========
+        const onlineTimeTracker = {
+            startTime: Date.now(),
+            lastReportTime: Date.now(),
+            reportInterval: 60000,  // 每60秒上报一次
+            isPageVisible: true,
+            timer: null,
+            
+            // 初始化追踪器
+            init() {
+                this.startTime = Date.now();
+                this.lastReportTime = Date.now();
+                
+                // 监听页面可见性变化
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        // 页面隐藏，立即上报当前时长
+                        this.isPageVisible = false;
+                        this.reportTime();
+                    } else {
+                        // 页面可见，重新开始计时
+                        this.isPageVisible = true;
+                        this.lastReportTime = Date.now();
+                    }
+                });
+                
+                // 页面关闭或刷新前上报
+                window.addEventListener('beforeunload', () => {
+                    this.reportTime(true);
+                });
+                
+                // 定时上报
+                this.timer = setInterval(() => {
+                    if (this.isPageVisible) {
+                        this.reportTime();
+                    }
+                }, this.reportInterval);
+                
+                console.log('在线时长追踪已启动');
+            },
+            
+            // 上报时长
+            async reportTime(isUnload = false) {
+                const now = Date.now();
+                const duration = Math.floor((now - this.lastReportTime) / 1000);  // 转换为秒
+                
+                // 至少记录5秒以上的时长
+                if (duration < 5) {
+                    return;
+                }
+                
+                this.lastReportTime = now;
+                
+                try {
+                    // 使用 sendBeacon 确保页面关闭时也能发送
+                    if (isUnload && navigator.sendBeacon) {
+                        const data = JSON.stringify({ duration: duration });
+                        navigator.sendBeacon(`${API_BASE}/analytics/record-online-time`, data);
+                    } else {
+                        await fetch(`${API_BASE}/analytics/record-online-time`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ duration: duration }),
+                            credentials: 'same-origin'
+                        });
+                    }
+                    console.log(`已上报学习时长: ${duration}秒`);
+                } catch (error) {
+                    console.error('上报在线时长失败:', error);
+                }
+            },
+            
+            // 停止追踪
+            stop() {
+                if (this.timer) {
+                    clearInterval(this.timer);
+                    this.timer = null;
+                }
+                // 停止前上报剩余时长
+                this.reportTime();
+            }
+        };
+        
         // 搜索状态管理
         let searchState = {
             isSearching: false,
@@ -590,6 +675,9 @@
             
             // 初始化用户菜单
             initUserMenu();
+            
+            // 启动在线时长追踪
+            onlineTimeTracker.init();
             
             // 初始化各视图数据
             initializeDashboard();

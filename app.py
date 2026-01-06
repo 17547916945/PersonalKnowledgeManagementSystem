@@ -2103,6 +2103,39 @@ def create_app():
             }
         })
     
+    @app.route('/api/analytics/record-online-time', methods=['POST'])
+    @login_required
+    def record_online_time():
+        """记录用户在线时长（前端定期上报）"""
+        user_id = session.get('user_id')
+        data = request.get_json(force=True, silent=True) or {}
+        duration = data.get('duration', 0)  # 在线时长（秒）
+        
+        if duration <= 0:
+            return jsonify({'success': False, 'message': '时长必须大于0'}), 400
+        
+        # 限制单次上报最大时长为10分钟（防止异常数据）
+        if duration > 600:
+            duration = 600
+        
+        try:
+            db_manager.log_user_behavior(
+                user_id=user_id,
+                action_type='study',
+                duration=duration,
+                details={'source': 'page_online_time'}
+            )
+            
+            return jsonify({
+                'success': True,
+                'message': f'已记录在线时长: {duration}秒',
+                'duration': duration
+            })
+            
+        except Exception as e:
+            print(f"记录在线时长失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
     @app.route('/api/analytics/study-time')
     @login_required
     def get_study_time():
