@@ -12,12 +12,12 @@ import sqlite3
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Generator
 import hashlib
 import mimetypes
 
 # 第三方库导入
-from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, session, redirect, url_for
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, session, redirect, url_for, Response
 from flask_cors import CORS
 from functools import wraps
 import spacy
@@ -52,7 +52,8 @@ except ImportError:
 
 # 尝试导入textract库（支持多种格式，包括.doc）
 try:
-    import textract
+    # 使用 type: ignore 避免静态检查在未安装依赖时报“无法解析导入”警告
+    import textract  # type: ignore
     TEXTTRACT_AVAILABLE = True
 except ImportError:
     TEXTTRACT_AVAILABLE = False
@@ -434,7 +435,7 @@ class AIAssistant:
         self.model = "deepseek-chat"
         
     def _call_api(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> Optional[str]:
-        """调用DeepSeek API"""
+        """调用DeepSeek API（非流式）"""
         if not self.api_key:
             return None
         
@@ -469,6 +470,68 @@ class AIAssistant:
         except Exception as e:
             print(f"调用DeepSeek API失败: {str(e)}")
             return None
+
+    def _stream_api(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> Generator[str, None, None]:
+        """
+        调用DeepSeek API（流式），逐步返回内容片段
+        注意：DeepSeek 接口与 OpenAI Chat Completions 兼容，支持 stream 模式
+        """
+        if not self.api_key:
+            return
+
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+
+            data = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": 2000,
+                "stream": True
+            }
+
+            with requests.post(
+                self.api_url,
+                headers=headers,
+                json=data,
+                timeout=60,
+                stream=True,
+            ) as response:
+                if response.status_code != 200:
+                    print(f"DeepSeek 流式 API 错误: {response.status_code} - {response.text}")
+                    return
+
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    # DeepSeek 兼容 OpenAI，数据行以 "data: " 开头
+                    if line.startswith("data:"):
+                        payload = line[len("data:"):].strip()
+                    else:
+                        payload = line.strip()
+
+                    if not payload or payload == "[DONE]":
+                        break
+
+                    try:
+                        data = json.loads(payload)
+                        choices = data.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            # 返回每一小段内容
+                            yield content
+                    except Exception as e:
+                        print(f"解析 DeepSeek 流式数据出错: {e}, 原始数据: {payload}")
+                        continue
+        except Exception as e:
+            print(f"调用 DeepSeek 流式 API 失败: {e}")
+            return
     
     def chat(self, user_message: str, context: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """与AI助手对话"""
@@ -505,6 +568,30 @@ class AIAssistant:
                 "message": "抱歉，AI服务暂时不可用，请稍后再试。",
                 "error": "API调用失败"
             }
+
+    def stream_chat(self, user_message: str, context: List[Dict[str, str]] = None) -> Generator[str, None, None]:
+        """与AI助手进行流式对话，逐步返回内容片段"""
+        system_prompt = """你是一个专业的学习助手，专门帮助学生进行知识管理和学习。
+你的职责包括：
+1. 回答学生关于学习内容的问题
+2. 提供学习建议和学习路径规划
+3. 解释复杂的概念和知识点
+4. 帮助学生理解知识之间的关联
+5. 提供复习建议和记忆技巧
+
+请用中文回答，回答要简洁明了、专业准确。"""
+
+        messages = [{"role": "system", "content": system_prompt}]
+
+        if context:
+            messages.extend(context)
+
+        messages.append({"role": "user", "content": user_message})
+
+        # 直接把底层流式 API 的内容片段 yield 出去
+        for chunk in self._stream_api(messages):
+            if chunk:
+                yield chunk
     
     def get_learning_suggestion(self, topic: str, user_documents: List[Dict] = None) -> Dict[str, Any]:
         """获取学习建议"""
@@ -2639,7 +2726,7 @@ def create_app():
             # 获取对话历史（可选）
             context = data.get('context', [])
             
-            # 调用AI助手
+            # 调用AI助手（非流式）
             result = ai_assistant.chat(user_message, context)
             
             return jsonify(result)
@@ -2651,6 +2738,48 @@ def create_app():
             return jsonify({
                 'success': False,
                 'message': f'处理请求失败: {str(e)}'
+            }), 500
+
+    @app.route('/api/ai-assistant/chat-stream', methods=['POST'])
+    def ai_chat_stream():
+        """AI 对话接口（流式响应）"""
+        try:
+            if not ALIYUN_API_KEY:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI学习助手功能未配置，请在config.py中设置ALIYUN_API_KEY'
+                }), 503
+
+            data = request.get_json(force=True, silent=True) or {}
+            user_message = data.get('message', '').strip()
+
+            if not user_message:
+                return jsonify({
+                    'success': False,
+                    'message': '消息内容不能为空'
+                }), 400
+
+            context = data.get('context', [])
+
+            def generate():
+                # 逐步把模型返回的内容片段写给前端
+                first_chunk = True
+                for chunk in ai_assistant.stream_chat(user_message, context):
+                    if not chunk:
+                        continue
+                    # 为了尽量减少前端解析负担，这里直接返回纯文本流
+                    # 浏览器端累积这些片段即可
+                    yield chunk
+                    first_chunk = False
+
+            return Response(generate(), mimetype='text/plain; charset=utf-8')
+        except Exception as e:
+            print(f"AI 流式对话错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({
+                'success': False,
+                'message': f'处理流式请求失败: {str(e)}'
             }), 500
     
     @app.route('/api/ai-assistant/suggestion', methods=['POST'])

@@ -366,7 +366,7 @@
                     
                     <!-- 输入区域 -->
                     <div class="border-t border-gray-200 p-4">
-                        <div class="flex space-x-3">
+                        <div class="flex space-x-3 items-center">
                             <input 
                                 type="text" 
                                 id="ai-chat-input" 
@@ -375,9 +375,18 @@
                                 onkeypress="if(event.key === 'Enter') sendAIMessage()"
                             >
                             <button 
+                                id="ai-stop-btn"
+                                class="hidden bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg flex items-center"
+                                type="button"
+                            >
+                                <iconify-icon class="mr-1" icon="mdi:pause-circle-outline"></iconify-icon>
+                                <span>暂停生成</span>
+                            </button>
+                            <button 
                                 id="ai-send-btn" 
                                 class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg flex items-center"
                                 onclick="sendAIMessage()"
+                                type="button"
                             >
                                 <iconify-icon class="mr-2" icon="mdi:send"></iconify-icon>
                                 <span>发送</span>
@@ -2855,9 +2864,15 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
 
         // AI学习助手相关功能
         let aiChatContext = []; // 存储对话历史
+        let aiCurrentController = null; // 当前请求的 AbortController，用于暂停生成
 
-        // 发送AI消息
+        // 发送AI消息（流式响应）
         async function sendAIMessage() {
+            // 如果当前有正在进行的生成，先不允许再次发送
+            if (aiCurrentController) {
+                return;
+            }
+
             const input = document.getElementById('ai-chat-input');
             const message = input.value.trim();
             
@@ -2869,47 +2884,116 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
             // 添加用户消息到界面
             addChatMessage('user', message);
             
-            // 显示加载状态
-            const loadingId = addChatMessage('assistant', '正在思考...', true);
-            
+            // 先创建一个空的助手回复气泡，后续不断往里追加内容
+            const assistantMsgId = addChatMessage('assistant', '');
+
+            // 创建 AbortController，以便支持“暂停生成”
+            aiCurrentController = new AbortController();
+            const stopBtn = document.getElementById('ai-stop-btn');
+            if (stopBtn) {
+                stopBtn.classList.remove('hidden');
+                stopBtn.onclick = () => {
+                    if (aiCurrentController) {
+                        aiCurrentController.abort();
+                    }
+                };
+            }
+
             try {
-                const response = await fetch(`${API_BASE}/ai-assistant/chat`, {
+                const response = await fetch(`${API_BASE}/ai-assistant/chat-stream`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
+                    signal: aiCurrentController.signal,
                     body: JSON.stringify({
                         message: message,
                         context: aiChatContext
                     })
                 });
-                
-                const result = await response.json();
-                
-                // 移除加载消息
-                document.getElementById(loadingId)?.remove();
-                
-                if (result.success) {
-                    // 添加AI回复
-                    addChatMessage('assistant', result.message);
-                    
-                    // 更新对话历史
+
+                if (!response.ok) {
+                    // 如果后端不支持流式或返回错误，尝试回退到非流式接口
+                    const fallbackResp = await fetch(`${API_BASE}/ai-assistant/chat`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            message: message,
+                            context: aiChatContext
+                        })
+                    });
+                    const result = await fallbackResp.json();
+                    updateChatMessageContent(assistantMsgId, result.success ? result.message : (result.message || '抱歉，发生了错误，请稍后再试。'));
+
+                    if (result.success) {
+                        aiChatContext.push(
+                            { role: 'user', content: message },
+                            { role: 'assistant', content: result.message }
+                        );
+                        if (aiChatContext.length > 20) {
+                            aiChatContext = aiChatContext.slice(-20);
+                        }
+                    }
+                    return;
+                }
+
+                if (!response.body || !window.ReadableStream) {
+                    // 环境不支持流式读取，同样回退
+                    const text = await response.text();
+                    updateChatMessageContent(assistantMsgId, text || '（空回复）');
                     aiChatContext.push(
                         { role: 'user', content: message },
-                        { role: 'assistant', content: result.message }
+                        { role: 'assistant', content: text }
                     );
-                    
-                    // 限制历史记录长度
                     if (aiChatContext.length > 20) {
                         aiChatContext = aiChatContext.slice(-20);
                     }
-                } else {
-                    addChatMessage('assistant', result.message || '抱歉，发生了错误，请稍后再试。');
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let done = false;
+                let fullText = '';
+
+                while (!done) {
+                    const { value, done: doneReading } = await reader.read();
+                    done = doneReading;
+                    if (value) {
+                        const chunk = decoder.decode(value, { stream: !done });
+                        if (chunk) {
+                            fullText += chunk;
+                            appendChatMessageContent(assistantMsgId, chunk);
+                        }
+                    }
+                }
+
+                // 请求结束后，把本轮问答加入上下文
+                if (fullText.trim()) {
+                    aiChatContext.push(
+                        { role: 'user', content: message },
+                        { role: 'assistant', content: fullText }
+                    );
+                    if (aiChatContext.length > 20) {
+                        aiChatContext = aiChatContext.slice(-20);
+                    }
                 }
             } catch (error) {
                 console.error('发送消息失败:', error);
-                document.getElementById(loadingId)?.remove();
-                addChatMessage('assistant', '抱歉，网络连接失败，请检查网络后重试。');
+                // 如果是主动中断（暂停），不显示报错，只保留已有内容
+                if (error.name !== 'AbortError') {
+                    updateChatMessageContent(assistantMsgId, '抱歉，网络连接失败，请检查网络后重试。');
+                }
+            } finally {
+                // 无论成功、失败还是被中断，都重置控制器并隐藏“暂停生成”按钮
+                aiCurrentController = null;
+                const stopBtn = document.getElementById('ai-stop-btn');
+                if (stopBtn) {
+                    stopBtn.classList.add('hidden');
+                    stopBtn.onclick = null;
+                }
             }
         }
 
@@ -2942,7 +3026,7 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
                         <iconify-icon class="text-white text-lg" icon="mdi:robot"></iconify-icon>
                     </div>
                     <div class="flex-1 bg-blue-50 rounded-lg p-4">
-                        <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(content)}</p>
+                        <p id="${messageId}-content" class="text-gray-800 whitespace-pre-wrap">${escapeHtml(content || '')}</p>
                     </div>
                 `;
             }
@@ -2953,6 +3037,31 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
             
             return messageId;
+        }
+
+        // 追加助手消息内容（用于流式追加）
+        function appendChatMessageContent(messageId, deltaText) {
+            const p = document.getElementById(messageId + '-content');
+            if (!p || !deltaText) return;
+            // 使用 textContent，自动完成 HTML 转义，避免 XSS
+            p.textContent = (p.textContent || '') + deltaText;
+
+            const messagesContainer = document.getElementById('ai-chat-messages');
+            if (messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+        }
+
+        // 覆盖整条助手消息内容（用于错误回退场景）
+        function updateChatMessageContent(messageId, text) {
+            const p = document.getElementById(messageId + '-content');
+            if (!p) return;
+            p.textContent = text || '';
+
+            const messagesContainer = document.getElementById('ai-chat-messages');
+            if (messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
         }
 
         // HTML转义函数
