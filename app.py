@@ -335,6 +335,33 @@ class DatabaseManager:
                     VALUES ('默认方案', '系统默认的知识图谱方案', 1)
                 ''')
 
+    # 用户行为记录工具方法
+    def log_user_behavior(self, user_id: int, action_type: str, document_id: Optional[int] = None,
+                          duration: Optional[int] = None, details: Optional[Dict[str, Any]] = None) -> None:
+        """
+        记录用户行为到 user_behaviors 表中
+        duration 单位为秒；details 为可选的 JSON 信息
+        """
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    '''
+                    INSERT INTO user_behaviors (user_id, document_id, action_type, duration, details)
+                    VALUES (?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        user_id,
+                        document_id,
+                        action_type,
+                        duration,
+                        json.dumps(details, ensure_ascii=False) if details else None
+                    )
+                )
+                conn.commit()
+        except Exception as e:
+            # 打印错误但不影响主流程
+            print(f"记录用户行为失败: {e}")
+
 # AI处理类
 class AIProcessor:
     """AI处理类 - 封装各种AI算法"""
@@ -2504,7 +2531,7 @@ def create_app():
     
     @app.route('/api/documents/<int:doc_id>')
     def get_document_detail(doc_id):
-        """获取文档详情"""
+        """获取文档详情，并记录一次查看行为供学习时长统计使用"""
         try:
             with db_manager.get_connection() as conn:
                 doc = conn.execute(
@@ -2556,7 +2583,7 @@ def create_app():
                 if doc_dict.get('tags'):
                     try:
                         doc_dict['tags'] = json.loads(doc_dict['tags'])
-                    except:
+                    except Exception:
                         doc_dict['tags'] = []
                 else:
                     doc_dict['tags'] = []
@@ -2564,10 +2591,27 @@ def create_app():
                 if doc_dict.get('metadata'):
                     try:
                         doc_dict['metadata'] = json.loads(doc_dict['metadata'])
-                    except:
+                    except Exception:
                         doc_dict['metadata'] = {}
                 else:
                     doc_dict['metadata'] = {}
+
+                # 记录一次查看行为（简单估计一次查看 5 分钟 = 300 秒）
+                try:
+                    current_user_id = session.get('user_id')
+                    if current_user_id:
+                        db_manager.log_user_behavior(
+                            user_id=current_user_id,
+                            action_type='view',
+                            document_id=doc_id,
+                            duration=300,
+                            details={
+                                'source': 'document_detail',
+                                'title': doc_dict.get('title')
+                            }
+                        )
+                except Exception as behavior_err:
+                    print(f"记录查看行为失败: {behavior_err}")
                 
                 return jsonify({
                     'success': True,
