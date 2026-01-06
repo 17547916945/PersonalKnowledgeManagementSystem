@@ -1118,7 +1118,7 @@ class DocumentManager:
             return (None, False)
     
     def search_documents(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """搜索文档 - 精准搜索版本，只返回真正相关的文档"""
+        """搜索文档 - 在保证精确度的前提下适当放宽召回"""
         with self.db.get_connection() as conn:
             query_lower = query.lower().strip()
             if not query_lower:
@@ -1187,12 +1187,12 @@ class DocumentManager:
                         if count >= 3:  # 至少出现3次才考虑
                             score += min(count * 0.5, 5.0)  # 最多5分
                 else:
-                    # 内容搜索模式：内容匹配
+                    # 内容搜索模式：内容匹配（稍微放宽阈值）
                     if query_lower in content:
-                        # 计算出现次数，但要求至少出现2次
+                        # 计算出现次数，要求至少出现1次即可计分
                         count = content.count(query_lower)
-                        if count >= 2:
-                            score += min(count * 1.5, 25.0)  # 最多25分
+                        if count >= 1:
+                            score += min(count * 1.2, 25.0)  # 最多25分
                     
                     # 关键词匹配（从tags中）
                     tags_str = doc_dict.get('tags', '')
@@ -1218,8 +1218,8 @@ class DocumentManager:
                 
                 # 只添加有意义的匹配结果
                 # 文件名搜索：至少要有文件名或标题匹配
-                # 内容搜索：至少要有一定分数
-                min_score = 25.0 if is_filename_search else 15.0
+                # 内容搜索：至少要有一定分数（略微降低阈值，提升召回）
+                min_score = 22.0 if is_filename_search else 10.0
                 
                 if score >= min_score:
                     doc_dict['_search_score'] = score
