@@ -2620,6 +2620,13 @@ def create_app():
     def ai_chat():
         """AI对话接口"""
         try:
+            # 检查AI助手是否可用
+            if not ALIYUN_API_KEY:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI学习助手功能未配置，请在config.py中设置ALIYUN_API_KEY'
+                }), 503
+            
             data = request.get_json(force=True, silent=True) or {}
             user_message = data.get('message', '').strip()
             
@@ -2638,6 +2645,9 @@ def create_app():
             return jsonify(result)
             
         except Exception as e:
+            print(f"AI对话错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return jsonify({
                 'success': False,
                 'message': f'处理请求失败: {str(e)}'
@@ -2710,6 +2720,13 @@ def create_app():
     def ai_review_plan():
         """生成复习计划"""
         try:
+            # 检查AI助手是否可用
+            if not ALIYUN_API_KEY:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI学习助手功能未配置，请在config.py中设置ALIYUN_API_KEY'
+                }), 503
+            
             data = request.get_json(force=True, silent=True) or {}
             knowledge_points = data.get('knowledge_points', [])
             
@@ -2725,6 +2742,9 @@ def create_app():
             return jsonify(result)
             
         except Exception as e:
+            print(f"生成复习计划错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return jsonify({
                 'success': False,
                 'message': f'处理请求失败: {str(e)}'

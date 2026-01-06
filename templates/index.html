@@ -2995,6 +2995,12 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
                 if (points) {
                     const pointsList = points.split(',').map(p => p.trim()).filter(p => p);
                     if (pointsList.length > 0) {
+                        // 添加用户输入到聊天
+                        addChatMessage('user', `我想为以下知识点制定复习计划：${pointsList.join('、')}`);
+                        
+                        // 显示加载状态
+                        const loadingId = addChatMessage('assistant', '正在生成复习计划...', true);
+                        
                         try {
                             const response = await fetch(`${API_BASE}/ai-assistant/review-plan`, {
                                 method: 'POST',
@@ -3008,6 +3014,9 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
                             
                             const result = await response.json();
                             
+                            // 移除加载消息
+                            document.getElementById(loadingId)?.remove();
+                            
                             if (result.success) {
                                 addChatMessage('assistant', result.message);
                             } else {
@@ -3015,8 +3024,12 @@ ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n
                             }
                         } catch (error) {
                             console.error('生成复习计划失败:', error);
-                            addChatMessage('assistant', '网络错误，请稍后再试。');
+                            // 移除加载消息
+                            document.getElementById(loadingId)?.remove();
+                            addChatMessage('assistant', '网络错误，请检查网络连接后重试。');
                         }
+                    } else {
+                        alert('请输入至少一个知识点');
                     }
                 }
             }
