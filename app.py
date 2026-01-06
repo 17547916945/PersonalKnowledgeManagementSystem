@@ -327,6 +327,50 @@ class DatabaseManager:
                 # 字段已存在，忽略错误
                 pass
             
+            # 为知识节点表添加mastery_level字段（掌握等级：0=待学习, 1=学习中, 2=已掌握）
+            try:
+                conn.execute('ALTER TABLE knowledge_nodes ADD COLUMN mastery_level INTEGER DEFAULT 0')
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略错误
+                pass
+            
+            # 知识点学习记录表 - 记录用户对每个知识点的学习行为
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS knowledge_point_learning (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    knowledge_node_id INTEGER NOT NULL,
+                    total_study_time INTEGER DEFAULT 0,  -- 累计学习时长（秒）
+                    study_count INTEGER DEFAULT 0,  -- 学习次数
+                    last_study_time TIMESTAMP,  -- 最后学习时间
+                    test_score REAL,  -- 最近测试分数（0-100）
+                    test_count INTEGER DEFAULT 0,  -- 测试次数
+                    last_test_time TIMESTAMP,  -- 最后测试时间
+                    mastery_level INTEGER DEFAULT 0,  -- 掌握等级：0=待学习, 1=学习中, 2=已掌握
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    FOREIGN KEY (knowledge_node_id) REFERENCES knowledge_nodes(id),
+                    UNIQUE(user_id, knowledge_node_id)
+                )
+            ''')
+            
+            # 知识点学习历史表 - 记录每次学习的详细信息
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS knowledge_point_study_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    knowledge_node_id INTEGER NOT NULL,
+                    action_type TEXT NOT NULL,  -- study（学习）、test（测试）
+                    duration INTEGER,  -- 本次学习时长（秒）
+                    score REAL,  -- 本次测试分数（仅测试时有值）
+                    details TEXT,  -- JSON格式存储详细信息
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    FOREIGN KEY (knowledge_node_id) REFERENCES knowledge_nodes(id)
+                )
+            ''')
+            
             # 创建默认方案（如果不存在）
             default_scheme = conn.execute('SELECT id FROM knowledge_graph_schemes WHERE is_default = 1').fetchone()
             if not default_scheme:
@@ -2166,8 +2210,11 @@ def create_app():
         })
     
     @app.route('/api/analytics/knowledge-level')
+    @login_required
     def get_knowledge_level():
-        """获取知识点掌握分布（统计来自已上传文件的所有类型节点）"""
+        """获取知识点掌握分布（基于真实学习数据计算）"""
+        user_id = session.get('user_id', 1)
+        
         with db_manager.get_connection() as conn:
             # 统计来自未删除文档的所有类型节点
             total_nodes = conn.execute('''
@@ -2176,7 +2223,6 @@ def create_app():
                 WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
             ''').fetchone()[0]
             
-            # 简化的掌握度计算（实际应用中需要更复杂的算法）
             if total_nodes == 0:
                 levels = [
                     {'value': 0, 'name': '已掌握'},
@@ -2184,9 +2230,32 @@ def create_app():
                     {'value': 0, 'name': '待学习'}
                 ]
             else:
-                mastered = int(total_nodes * 0.35)
-                learning = int(total_nodes * 0.45)
+                # 基于真实的学习数据计算掌握分布
+                # 统计已掌握的知识点（mastery_level = 2）
+                mastered = conn.execute('''
+                    SELECT COUNT(DISTINCT kpl.knowledge_node_id) 
+                    FROM knowledge_point_learning kpl
+                    INNER JOIN knowledge_nodes kn ON kpl.knowledge_node_id = kn.id
+                    LEFT JOIN documents d ON kn.document_id = d.id
+                    WHERE kpl.user_id = ? 
+                    AND kpl.mastery_level = 2
+                    AND (kn.document_id IS NULL OR d.is_deleted = 0)
+                ''', (user_id,)).fetchone()[0]
+                
+                # 统计学习中的知识点（mastery_level = 1）
+                learning = conn.execute('''
+                    SELECT COUNT(DISTINCT kpl.knowledge_node_id) 
+                    FROM knowledge_point_learning kpl
+                    INNER JOIN knowledge_nodes kn ON kpl.knowledge_node_id = kn.id
+                    LEFT JOIN documents d ON kn.document_id = d.id
+                    WHERE kpl.user_id = ? 
+                    AND kpl.mastery_level = 1
+                    AND (kn.document_id IS NULL OR d.is_deleted = 0)
+                ''', (user_id,)).fetchone()[0]
+                
+                # 剩余的是待学习的知识点
                 pending = total_nodes - mastered - learning
+                
                 levels = [
                     {'value': mastered, 'name': '已掌握'},
                     {'value': learning, 'name': '学习中'},
@@ -2200,6 +2269,515 @@ def create_app():
                 'total': total_nodes
             }
         })
+    
+    # ========== 知识点学习行为记录API ==========
+    
+    @app.route('/api/knowledge-point/<int:node_id>/start-study', methods=['POST'])
+    @login_required
+    def start_study_knowledge_point(node_id):
+        """开始学习某个知识点"""
+        user_id = session.get('user_id')
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 检查知识点是否存在
+                node = conn.execute(
+                    'SELECT id, name FROM knowledge_nodes WHERE id = ?',
+                    (node_id,)
+                ).fetchone()
+                
+                if not node:
+                    return jsonify({'success': False, 'message': '知识点不存在'}), 404
+                
+                # 创建或更新学习记录
+                existing = conn.execute(
+                    'SELECT id FROM knowledge_point_learning WHERE user_id = ? AND knowledge_node_id = ?',
+                    (user_id, node_id)
+                ).fetchone()
+                
+                now = datetime.now().isoformat()
+                
+                if existing:
+                    # 更新现有记录
+                    conn.execute('''
+                        UPDATE knowledge_point_learning 
+                        SET study_count = study_count + 1, 
+                            last_study_time = ?,
+                            mastery_level = CASE WHEN mastery_level = 0 THEN 1 ELSE mastery_level END,
+                            updated_at = ?
+                        WHERE user_id = ? AND knowledge_node_id = ?
+                    ''', (now, now, user_id, node_id))
+                else:
+                    # 创建新记录，状态为"学习中"
+                    conn.execute('''
+                        INSERT INTO knowledge_point_learning 
+                        (user_id, knowledge_node_id, study_count, last_study_time, mastery_level, updated_at)
+                        VALUES (?, ?, 1, ?, 1, ?)
+                    ''', (user_id, node_id, now, now))
+                
+                conn.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': f'开始学习知识点: {node["name"]}',
+                    'node_id': node_id
+                })
+                
+        except Exception as e:
+            print(f"开始学习知识点失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/knowledge-point/<int:node_id>/record-study', methods=['POST'])
+    @login_required
+    def record_study_time(node_id):
+        """记录知识点学习时长"""
+        user_id = session.get('user_id')
+        data = request.get_json(force=True, silent=True) or {}
+        duration = data.get('duration', 0)  # 学习时长（秒）
+        details = data.get('details')  # 可选的详细信息
+        
+        if duration <= 0:
+            return jsonify({'success': False, 'message': '学习时长必须大于0'}), 400
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 检查知识点是否存在
+                node = conn.execute(
+                    'SELECT id, name FROM knowledge_nodes WHERE id = ?',
+                    (node_id,)
+                ).fetchone()
+                
+                if not node:
+                    return jsonify({'success': False, 'message': '知识点不存在'}), 404
+                
+                now = datetime.now().isoformat()
+                
+                # 更新或创建学习记录
+                existing = conn.execute(
+                    'SELECT id, total_study_time, mastery_level FROM knowledge_point_learning WHERE user_id = ? AND knowledge_node_id = ?',
+                    (user_id, node_id)
+                ).fetchone()
+                
+                if existing:
+                    new_total_time = existing['total_study_time'] + duration
+                    # 如果累计学习时间超过30分钟且状态为待学习，则更新为学习中
+                    new_mastery = existing['mastery_level']
+                    if new_mastery == 0:
+                        new_mastery = 1
+                    
+                    conn.execute('''
+                        UPDATE knowledge_point_learning 
+                        SET total_study_time = ?,
+                            last_study_time = ?,
+                            mastery_level = ?,
+                            updated_at = ?
+                        WHERE user_id = ? AND knowledge_node_id = ?
+                    ''', (new_total_time, now, new_mastery, now, user_id, node_id))
+                else:
+                    # 创建新记录
+                    conn.execute('''
+                        INSERT INTO knowledge_point_learning 
+                        (user_id, knowledge_node_id, total_study_time, study_count, last_study_time, mastery_level, updated_at)
+                        VALUES (?, ?, ?, 1, ?, 1, ?)
+                    ''', (user_id, node_id, duration, now, now))
+                
+                # 记录学习历史
+                conn.execute('''
+                    INSERT INTO knowledge_point_study_history 
+                    (user_id, knowledge_node_id, action_type, duration, details)
+                    VALUES (?, ?, 'study', ?, ?)
+                ''', (user_id, node_id, duration, json.dumps(details, ensure_ascii=False) if details else None))
+                
+                conn.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': f'已记录学习时长: {duration}秒',
+                    'node_id': node_id,
+                    'duration': duration
+                })
+                
+        except Exception as e:
+            print(f"记录学习时长失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/knowledge-point/<int:node_id>/record-test', methods=['POST'])
+    @login_required
+    def record_test_score(node_id):
+        """记录知识点测试分数并自动更新掌握状态"""
+        user_id = session.get('user_id')
+        data = request.get_json(force=True, silent=True) or {}
+        score = data.get('score')  # 测试分数（0-100）
+        details = data.get('details')  # 可选的详细信息
+        
+        if score is None or not (0 <= score <= 100):
+            return jsonify({'success': False, 'message': '测试分数必须在0-100之间'}), 400
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 检查知识点是否存在
+                node = conn.execute(
+                    'SELECT id, name FROM knowledge_nodes WHERE id = ?',
+                    (node_id,)
+                ).fetchone()
+                
+                if not node:
+                    return jsonify({'success': False, 'message': '知识点不存在'}), 404
+                
+                now = datetime.now().isoformat()
+                
+                # 根据分数决定掌握等级
+                # 分数 >= 80: 已掌握(2)
+                # 分数 >= 60: 学习中(1)
+                # 分数 < 60: 学习中(1) - 需要继续学习
+                if score >= 80:
+                    new_mastery = 2
+                else:
+                    new_mastery = 1
+                
+                # 更新或创建学习记录
+                existing = conn.execute(
+                    'SELECT id FROM knowledge_point_learning WHERE user_id = ? AND knowledge_node_id = ?',
+                    (user_id, node_id)
+                ).fetchone()
+                
+                if existing:
+                    conn.execute('''
+                        UPDATE knowledge_point_learning 
+                        SET test_score = ?,
+                            test_count = test_count + 1,
+                            last_test_time = ?,
+                            mastery_level = ?,
+                            updated_at = ?
+                        WHERE user_id = ? AND knowledge_node_id = ?
+                    ''', (score, now, new_mastery, now, user_id, node_id))
+                else:
+                    conn.execute('''
+                        INSERT INTO knowledge_point_learning 
+                        (user_id, knowledge_node_id, test_score, test_count, last_test_time, mastery_level, updated_at)
+                        VALUES (?, ?, ?, 1, ?, ?, ?)
+                    ''', (user_id, node_id, score, now, new_mastery, now))
+                
+                # 记录测试历史
+                conn.execute('''
+                    INSERT INTO knowledge_point_study_history 
+                    (user_id, knowledge_node_id, action_type, score, details)
+                    VALUES (?, ?, 'test', ?, ?)
+                ''', (user_id, node_id, score, json.dumps(details, ensure_ascii=False) if details else None))
+                
+                conn.commit()
+                
+                mastery_text = '已掌握' if new_mastery == 2 else '学习中'
+                return jsonify({
+                    'success': True,
+                    'message': f'测试分数: {score}分，掌握状态: {mastery_text}',
+                    'node_id': node_id,
+                    'score': score,
+                    'mastery_level': new_mastery,
+                    'mastery_text': mastery_text
+                })
+                
+        except Exception as e:
+            print(f"记录测试分数失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/knowledge-point/<int:node_id>/update-mastery', methods=['POST'])
+    @login_required
+    def update_mastery_level(node_id):
+        """手动更新知识点掌握状态"""
+        user_id = session.get('user_id')
+        data = request.get_json(force=True, silent=True) or {}
+        mastery_level = data.get('mastery_level')  # 0=待学习, 1=学习中, 2=已掌握
+        
+        if mastery_level is None or mastery_level not in [0, 1, 2]:
+            return jsonify({'success': False, 'message': '掌握等级必须为0、1或2'}), 400
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 检查知识点是否存在
+                node = conn.execute(
+                    'SELECT id, name FROM knowledge_nodes WHERE id = ?',
+                    (node_id,)
+                ).fetchone()
+                
+                if not node:
+                    return jsonify({'success': False, 'message': '知识点不存在'}), 404
+                
+                now = datetime.now().isoformat()
+                
+                # 更新或创建学习记录
+                existing = conn.execute(
+                    'SELECT id FROM knowledge_point_learning WHERE user_id = ? AND knowledge_node_id = ?',
+                    (user_id, node_id)
+                ).fetchone()
+                
+                if existing:
+                    conn.execute('''
+                        UPDATE knowledge_point_learning 
+                        SET mastery_level = ?,
+                            updated_at = ?
+                        WHERE user_id = ? AND knowledge_node_id = ?
+                    ''', (mastery_level, now, user_id, node_id))
+                else:
+                    conn.execute('''
+                        INSERT INTO knowledge_point_learning 
+                        (user_id, knowledge_node_id, mastery_level, updated_at)
+                        VALUES (?, ?, ?, ?)
+                    ''', (user_id, node_id, mastery_level, now))
+                
+                conn.commit()
+                
+                mastery_texts = {0: '待学习', 1: '学习中', 2: '已掌握'}
+                return jsonify({
+                    'success': True,
+                    'message': f'已更新掌握状态: {mastery_texts[mastery_level]}',
+                    'node_id': node_id,
+                    'mastery_level': mastery_level,
+                    'mastery_text': mastery_texts[mastery_level]
+                })
+                
+        except Exception as e:
+            print(f"更新掌握状态失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/knowledge-point/<int:node_id>/learning-detail')
+    @login_required
+    def get_knowledge_point_detail(node_id):
+        """获取知识点的学习详情，包含学习历史和掌握状态"""
+        user_id = session.get('user_id')
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 获取知识点基本信息
+                node = conn.execute('''
+                    SELECT kn.*, d.title as document_title
+                    FROM knowledge_nodes kn
+                    LEFT JOIN documents d ON kn.document_id = d.id
+                    WHERE kn.id = ?
+                ''', (node_id,)).fetchone()
+                
+                if not node:
+                    return jsonify({'success': False, 'message': '知识点不存在'}), 404
+                
+                # 获取用户的学习记录
+                learning = conn.execute('''
+                    SELECT * FROM knowledge_point_learning
+                    WHERE user_id = ? AND knowledge_node_id = ?
+                ''', (user_id, node_id)).fetchone()
+                
+                # 获取学习历史
+                history = conn.execute('''
+                    SELECT * FROM knowledge_point_study_history
+                    WHERE user_id = ? AND knowledge_node_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                ''', (user_id, node_id)).fetchall()
+                
+                mastery_texts = {0: '待学习', 1: '学习中', 2: '已掌握'}
+                
+                # 构建返回数据
+                node_data = {
+                    'id': node['id'],
+                    'name': node['name'],
+                    'node_type': node['node_type'],
+                    'description': node['description'],
+                    'document_title': node['document_title']
+                }
+                
+                learning_data = None
+                if learning:
+                    learning_data = {
+                        'total_study_time': learning['total_study_time'] or 0,
+                        'study_count': learning['study_count'] or 0,
+                        'last_study_time': learning['last_study_time'],
+                        'test_score': learning['test_score'],
+                        'test_count': learning['test_count'] or 0,
+                        'last_test_time': learning['last_test_time'],
+                        'mastery_level': learning['mastery_level'] or 0,
+                        'mastery_text': mastery_texts.get(learning['mastery_level'], '待学习')
+                    }
+                else:
+                    learning_data = {
+                        'total_study_time': 0,
+                        'study_count': 0,
+                        'last_study_time': None,
+                        'test_score': None,
+                        'test_count': 0,
+                        'last_test_time': None,
+                        'mastery_level': 0,
+                        'mastery_text': '待学习'
+                    }
+                
+                history_data = []
+                for h in history:
+                    history_data.append({
+                        'action_type': h['action_type'],
+                        'duration': h['duration'],
+                        'score': h['score'],
+                        'details': json.loads(h['details']) if h['details'] else None,
+                        'created_at': h['created_at']
+                    })
+                
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'node': node_data,
+                        'learning': learning_data,
+                        'history': history_data
+                    }
+                })
+                
+        except Exception as e:
+            print(f"获取知识点详情失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/knowledge-points/learning-status')
+    @login_required
+    def get_all_knowledge_points_status():
+        """获取所有知识点的学习状态列表"""
+        user_id = session.get('user_id')
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        mastery_filter = request.args.get('mastery')  # 0, 1, 2 或 'all'
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 构建查询
+                base_query = '''
+                    SELECT kn.id, kn.name, kn.node_type, kn.description,
+                           kpl.total_study_time, kpl.study_count, kpl.test_score, 
+                           kpl.test_count, kpl.mastery_level, kpl.last_study_time
+                    FROM knowledge_nodes kn
+                    LEFT JOIN documents d ON kn.document_id = d.id
+                    LEFT JOIN knowledge_point_learning kpl ON kn.id = kpl.knowledge_node_id AND kpl.user_id = ?
+                    WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                '''
+                
+                params = [user_id]
+                
+                # 根据掌握等级过滤
+                if mastery_filter and mastery_filter != 'all':
+                    try:
+                        mastery_level = int(mastery_filter)
+                        if mastery_level == 0:
+                            base_query += ' AND (kpl.mastery_level IS NULL OR kpl.mastery_level = 0)'
+                        else:
+                            base_query += ' AND kpl.mastery_level = ?'
+                            params.append(mastery_level)
+                    except ValueError:
+                        pass
+                
+                # 统计总数
+                count_query = f'SELECT COUNT(*) FROM ({base_query})'
+                total = conn.execute(count_query, params).fetchone()[0]
+                
+                # 分页查询
+                offset = (page - 1) * per_page
+                base_query += ' ORDER BY kpl.last_study_time DESC NULLS LAST, kn.name LIMIT ? OFFSET ?'
+                params.extend([per_page, offset])
+                
+                nodes = conn.execute(base_query, params).fetchall()
+                
+                mastery_texts = {0: '待学习', 1: '学习中', 2: '已掌握'}
+                
+                result = []
+                for n in nodes:
+                    mastery_level = n['mastery_level'] if n['mastery_level'] is not None else 0
+                    result.append({
+                        'id': n['id'],
+                        'name': n['name'],
+                        'node_type': n['node_type'],
+                        'description': n['description'],
+                        'total_study_time': n['total_study_time'] or 0,
+                        'study_count': n['study_count'] or 0,
+                        'test_score': n['test_score'],
+                        'test_count': n['test_count'] or 0,
+                        'mastery_level': mastery_level,
+                        'mastery_text': mastery_texts.get(mastery_level, '待学习'),
+                        'last_study_time': n['last_study_time']
+                    })
+                
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'items': result,
+                        'total': total,
+                        'page': page,
+                        'per_page': per_page,
+                        'total_pages': (total + per_page - 1) // per_page
+                    }
+                })
+                
+        except Exception as e:
+            print(f"获取知识点状态列表失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/analytics/study-summary')
+    @login_required
+    def get_study_summary():
+        """获取学习概况统计（基于真实数据）"""
+        user_id = session.get('user_id')
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 统计今日学习时长
+                from datetime import datetime, timedelta
+                today = datetime.now().date()
+                today_start = datetime.combine(today, datetime.min.time())
+                today_end = datetime.combine(today, datetime.max.time())
+                
+                today_study = conn.execute('''
+                    SELECT COALESCE(SUM(duration), 0) as total_duration
+                    FROM knowledge_point_study_history
+                    WHERE user_id = ? AND action_type = 'study'
+                    AND created_at >= ? AND created_at < ?
+                ''', (user_id, today_start.isoformat(), today_end.isoformat())).fetchone()
+                
+                today_hours = round((today_study['total_duration'] or 0) / 3600.0, 2)
+                
+                # 统计知识点掌握情况
+                mastered_count = conn.execute('''
+                    SELECT COUNT(*) FROM knowledge_point_learning
+                    WHERE user_id = ? AND mastery_level = 2
+                ''', (user_id,)).fetchone()[0]
+                
+                learning_count = conn.execute('''
+                    SELECT COUNT(*) FROM knowledge_point_learning
+                    WHERE user_id = ? AND mastery_level = 1
+                ''', (user_id,)).fetchone()[0]
+                
+                # 统计总知识点数
+                total_nodes = conn.execute('''
+                    SELECT COUNT(*) FROM knowledge_nodes kn
+                    LEFT JOIN documents d ON kn.document_id = d.id
+                    WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
+                ''').fetchone()[0]
+                
+                pending_count = total_nodes - mastered_count - learning_count
+                
+                # 统计待复习内容（超过7天未学习的"学习中"状态知识点）
+                seven_days_ago = datetime.now() - timedelta(days=7)
+                need_review = conn.execute('''
+                    SELECT COUNT(*) FROM knowledge_point_learning
+                    WHERE user_id = ? AND mastery_level = 1
+                    AND (last_study_time < ? OR last_study_time IS NULL)
+                ''', (user_id, seven_days_ago.isoformat())).fetchone()[0]
+                
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'today_study_hours': today_hours,
+                        'mastered_count': mastered_count,
+                        'learning_count': learning_count,
+                        'pending_count': pending_count,
+                        'total_nodes': total_nodes,
+                        'need_review_count': need_review
+                    }
+                })
+                
+        except Exception as e:
+            print(f"获取学习概况失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
     
     @app.route('/api/analytics/prediction')
     def get_prediction():
