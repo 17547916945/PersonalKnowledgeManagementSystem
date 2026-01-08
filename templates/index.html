@@ -424,23 +424,161 @@
                 
                 <div class="grid grid-cols-3 gap-6 mb-6">
                     <!-- 学习时长统计 -->
-                    <div class="bg-white rounded-xl shadow p-5 border border-blue-100 col-span-2">
-                        <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-lg font-bold">学习时长统计</h3>
-                            <div class="flex space-x-2">
-                                <button class="time-filter-btn text-xs bg-blue-100 hover:bg-blue-200 rounded px-2 py-1" data-period="week">本周</button>
-                                <button class="time-filter-btn text-xs bg-gray-100 hover:bg-gray-200 rounded px-2 py-1" data-period="month">本月</button>
-                                <button class="time-filter-btn text-xs bg-gray-100 hover:bg-gray-200 rounded px-2 py-1" data-period="quarter">本季</button>
+                    <div class="bg-white rounded-xl shadow-lg p-6 border border-blue-100 col-span-2 hover:shadow-xl transition-shadow duration-300">
+                        <div class="flex justify-between items-center mb-6">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-1 h-6 bg-gradient-to-b from-blue-500 to-blue-600 rounded-full"></div>
+                                <h3 class="text-xl font-bold text-gray-800">学习时长统计</h3>
+                            </div>
+                            <div class="flex space-x-2 bg-gray-50 rounded-lg p-1">
+                                <button class="time-filter-btn text-xs font-medium px-3 py-1.5 rounded-md transition-all duration-200 bg-blue-500 text-white shadow-sm" data-period="week">本周</button>
+                                <button class="time-filter-btn text-xs font-medium px-3 py-1.5 rounded-md transition-all duration-200 bg-gray-100 hover:bg-gray-200 text-gray-700" data-period="month">本月</button>
+                                <button class="time-filter-btn text-xs font-medium px-3 py-1.5 rounded-md transition-all duration-200 bg-gray-100 hover:bg-gray-200 text-gray-700" data-period="quarter">本季</button>
                             </div>
                         </div>
-                        <div class="h-64" id="study-time-chart"></div>
-                        <div class="mt-2 text-sm text-gray-600" id="study-time-summary"></div>
+                        <div class="h-72" id="study-time-chart"></div>
+                        <div class="mt-4 pt-4 border-t border-gray-100">
+                            <div class="flex items-center justify-center space-x-6 text-sm" id="study-time-summary">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+                                    <span class="text-gray-600">总时长: <span class="font-semibold text-gray-800">0.0</span> 小时</span>
+                                </div>
+                                <div class="text-gray-300">|</div>
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-2 h-2 rounded-full bg-blue-400"></div>
+                                    <span class="text-gray-600">平均: <span class="font-semibold text-gray-800">0.0</span> 小时/天</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- 知识点掌握分析 -->
-                    <div class="bg-white rounded-xl shadow p-5 border border-blue-100">
-                        <h3 class="text-lg font-bold mb-4">知识点掌握分布</h3>
-                        <div class="h-64" id="knowledge-level-chart"></div>
+                    <div class="bg-white rounded-xl shadow-lg p-6 border border-blue-100 hover:shadow-xl transition-shadow duration-300">
+                        <div class="flex justify-between items-center mb-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-1 h-6 bg-gradient-to-b from-green-500 to-green-600 rounded-full"></div>
+                                <h3 class="text-xl font-bold text-gray-800">知识点掌握分布</h3>
+                            </div>
+                            <button id="edit-knowledge-points-btn" class="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center space-x-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                </svg>
+                                <span>管理知识点</span>
+                            </button>
+                        </div>
+                        <div class="h-72" id="knowledge-level-chart"></div>
+                    </div>
+                    
+                    <!-- 知识点管理模态框 -->
+                    <div id="knowledge-points-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
+                        <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                            <!-- 模态框头部 -->
+                            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-green-50">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-1 h-6 bg-gradient-to-b from-blue-500 to-green-500 rounded-full"></div>
+                                    <h3 class="text-xl font-bold text-gray-800">知识点管理</h3>
+                                </div>
+                                <button id="close-knowledge-points-modal" class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            
+                            <!-- 模态框内容 -->
+                            <div class="flex-1 overflow-y-auto px-6 py-5">
+                                <div id="knowledge-points-manager" class="space-y-5">
+                                    <!-- 快速设置数量 -->
+                                    <div class="bg-gradient-to-br from-gray-50 to-blue-50 rounded-lg p-5 border border-gray-200">
+                                        <h4 class="text-base font-semibold text-gray-800 mb-4 flex items-center">
+                                            <svg class="w-5 h-5 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path>
+                                            </svg>
+                                            快速设置数量
+                                        </h4>
+                                        <div class="grid grid-cols-3 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">已掌握</label>
+                                                <input type="number" id="mastered-count" min="0" value="0" 
+                                                       class="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
+                                            </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">学习中</label>
+                                                <input type="number" id="learning-count" min="0" value="0"
+                                                       class="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors">
+                                            </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">待学习</label>
+                                                <input type="number" id="pending-count" min="0" value="0"
+                                                       class="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors">
+                                            </div>
+                                        </div>
+                                        <button id="save-counts-btn" class="mt-4 w-full px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-medium rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all shadow-md hover:shadow-lg">
+                                            保存数量
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- 知识点列表 -->
+                                    <div class="space-y-4">
+                                        <h4 class="text-base font-semibold text-gray-800 flex items-center">
+                                            <svg class="w-5 h-5 mr-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                            </svg>
+                                            知识点详情
+                                        </h4>
+                                        
+                                        <!-- 已掌握 -->
+                                        <div class="border-2 border-green-200 rounded-lg p-4 bg-gradient-to-br from-green-50 to-green-100/50 shadow-sm">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <span class="text-base font-semibold text-green-700 flex items-center">
+                                                    <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+                                                    已掌握
+                                                </span>
+                                                <button class="add-point-btn text-sm font-medium text-white bg-green-500 hover:bg-green-600 px-3 py-1.5 rounded-lg transition-colors shadow-sm" data-level="2">
+                                                    + 添加
+                                                </button>
+                                            </div>
+                                            <div id="mastered-list" class="space-y-2 max-h-64 overflow-y-auto"></div>
+                                        </div>
+                                        
+                                        <!-- 学习中 -->
+                                        <div class="border-2 border-blue-200 rounded-lg p-4 bg-gradient-to-br from-blue-50 to-blue-100/50 shadow-sm">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <span class="text-base font-semibold text-blue-700 flex items-center">
+                                                    <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
+                                                    学习中
+                                                </span>
+                                                <button class="add-point-btn text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded-lg transition-colors shadow-sm" data-level="1">
+                                                    + 添加
+                                                </button>
+                                            </div>
+                                            <div id="learning-list" class="space-y-2 max-h-64 overflow-y-auto"></div>
+                                        </div>
+                                        
+                                        <!-- 待学习 -->
+                                        <div class="border-2 border-orange-200 rounded-lg p-4 bg-gradient-to-br from-orange-50 to-orange-100/50 shadow-sm">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <span class="text-base font-semibold text-orange-700 flex items-center">
+                                                    <span class="w-3 h-3 rounded-full bg-orange-500 mr-2"></span>
+                                                    待学习
+                                                </span>
+                                                <button class="add-point-btn text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 px-3 py-1.5 rounded-lg transition-colors shadow-sm" data-level="0">
+                                                    + 添加
+                                                </button>
+                                            </div>
+                                            <div id="pending-list" class="space-y-2 max-h-64 overflow-y-auto"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 模态框底部 -->
+                            <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+                                <button id="close-knowledge-points-modal-footer" class="px-6 py-2.5 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300 transition-colors">
+                                    关闭
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -534,10 +672,12 @@
                 try {
                     // 使用 sendBeacon 确保页面关闭时也能发送
                     if (isUnload && navigator.sendBeacon) {
-                        const data = JSON.stringify({ duration: duration });
-                        navigator.sendBeacon(`${API_BASE}/analytics/record-online-time`, data);
+                        const blob = new Blob([JSON.stringify({ duration: duration })], {
+                            type: 'application/json'
+                        });
+                        navigator.sendBeacon(`${API_BASE}/analytics/record-online-time`, blob);
                     } else {
-                        await fetch(`${API_BASE}/analytics/record-online-time`, {
+                        const response = await fetch(`${API_BASE}/analytics/record-online-time`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json'
@@ -545,6 +685,9 @@
                             body: JSON.stringify({ duration: duration }),
                             credentials: 'same-origin'
                         });
+                        if (!response.ok) {
+                            console.warn('上报在线时长失败:', response.status);
+                        }
                     }
                     console.log(`已上报学习时长: ${duration}秒`);
                 } catch (error) {
@@ -887,16 +1030,227 @@
                 btn.addEventListener('click', function() {
                     // 更新按钮状态
                     document.querySelectorAll('.time-filter-btn').forEach(b => {
-                        b.classList.remove('bg-blue-100');
-                        b.classList.add('bg-gray-100');
+                        b.classList.remove('bg-blue-500', 'text-white', 'shadow-sm');
+                        b.classList.add('bg-gray-100', 'text-gray-700');
                     });
-                    this.classList.remove('bg-gray-100');
-                    this.classList.add('bg-blue-100');
+                    this.classList.remove('bg-gray-100', 'text-gray-700');
+                    this.classList.add('bg-blue-500', 'text-white', 'shadow-sm');
                     
                     // 重新加载数据
                     const period = this.getAttribute('data-period');
                     loadStudyTimeData(period);
                 });
+            });
+            
+            // 知识点管理模态框相关事件
+            const editBtn = document.getElementById('edit-knowledge-points-btn');
+            const modal = document.getElementById('knowledge-points-modal');
+            const closeModalBtn = document.getElementById('close-knowledge-points-modal');
+            const closeModalFooterBtn = document.getElementById('close-knowledge-points-modal-footer');
+            
+            // 打开模态框
+            function openKnowledgePointsModal() {
+                if (modal) {
+                    modal.classList.remove('hidden');
+                    document.body.style.overflow = 'hidden'; // 防止背景滚动
+                    // 加载最新数据
+                    loadKnowledgePoints();
+                }
+            }
+            
+            // 关闭模态框
+            function closeKnowledgePointsModal() {
+                if (modal) {
+                    modal.classList.add('hidden');
+                    document.body.style.overflow = ''; // 恢复滚动
+                }
+            }
+            
+            // 打开按钮点击事件
+            if (editBtn) {
+                editBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    openKnowledgePointsModal();
+                });
+            }
+            
+            // 关闭按钮点击事件
+            if (closeModalBtn) {
+                closeModalBtn.addEventListener('click', closeKnowledgePointsModal);
+            }
+            
+            if (closeModalFooterBtn) {
+                closeModalFooterBtn.addEventListener('click', closeKnowledgePointsModal);
+            }
+            
+            // 点击模态框背景关闭
+            if (modal) {
+                modal.addEventListener('click', function(e) {
+                    if (e.target === modal) {
+                        closeKnowledgePointsModal();
+                    }
+                });
+            }
+            
+            // ESC键关闭模态框
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+                    closeKnowledgePointsModal();
+                }
+            });
+            
+            // 保存数量按钮
+            const saveCountsBtn = document.getElementById('save-counts-btn');
+            if (saveCountsBtn) {
+                saveCountsBtn.addEventListener('click', saveKnowledgePointCounts);
+            }
+            
+            // 添加知识点按钮、编辑、删除
+            document.addEventListener('click', async function(e) {
+                if (e.target.classList.contains('add-point-btn')) {
+                    const level = parseInt(e.target.getAttribute('data-level'));
+                    const name = prompt('请输入知识点名称:');
+                    if (name && name.trim()) {
+                        await saveKnowledgePoint(name.trim(), level);
+                    }
+                }
+                
+                // 编辑知识点 - 进入编辑模式
+                if (e.target.classList.contains('edit-point-btn')) {
+                    e.stopPropagation();
+                    const item = e.target.closest('.knowledge-point-item');
+                    if (!item) return;
+                    
+                    // 如果已经在编辑模式，先退出
+                    const currentEditMode = item.querySelector('.edit-mode');
+                    if (currentEditMode && !currentEditMode.classList.contains('hidden')) {
+                        exitEditMode(item);
+                        return;
+                    }
+                    
+                    // 退出其他正在编辑的项目
+                    document.querySelectorAll('.knowledge-point-item').forEach(otherItem => {
+                        if (otherItem !== item) {
+                            const otherEditMode = otherItem.querySelector('.edit-mode');
+                            if (otherEditMode && !otherEditMode.classList.contains('hidden')) {
+                                exitEditMode(otherItem);
+                            }
+                        }
+                    });
+                    
+                    const nameSpan = item.querySelector('.knowledge-point-name');
+                    const actionButtons = item.querySelector('.action-buttons');
+                    const editMode = item.querySelector('.edit-mode');
+                    const editInput = item.querySelector('.edit-input');
+                    
+                    if (nameSpan && actionButtons && editMode && editInput) {
+                        // 隐藏显示区域，显示编辑区域
+                        nameSpan.classList.add('hidden');
+                        actionButtons.classList.add('hidden');
+                        editMode.classList.remove('hidden');
+                        
+                        // 聚焦输入框并选中文本
+                        setTimeout(() => {
+                            editInput.focus();
+                            editInput.select();
+                        }, 10);
+                    }
+                }
+                
+                // 保存编辑
+                if (e.target.classList.contains('save-edit-btn')) {
+                    e.stopPropagation();
+                    const item = e.target.closest('.knowledge-point-item');
+                    if (!item) return;
+                    
+                    const pointId = parseInt(e.target.getAttribute('data-id'));
+                    const level = parseInt(e.target.getAttribute('data-level'));
+                    const editInput = item.querySelector('.edit-input');
+                    const originalName = editInput.getAttribute('data-original');
+                    const newName = editInput.value.trim();
+                    
+                    if (!newName) {
+                        alert('知识点名称不能为空');
+                        editInput.focus();
+                        return;
+                    }
+                    
+                    if (newName === originalName) {
+                        // 没有修改，直接退出编辑模式
+                        exitEditMode(item);
+                        return;
+                    }
+                    
+                    // 保存修改
+                    const success = await saveKnowledgePoint(newName, level, pointId);
+                    if (success) {
+                        exitEditMode(item);
+                    }
+                }
+                
+                // 取消编辑
+                if (e.target.classList.contains('cancel-edit-btn')) {
+                    e.stopPropagation();
+                    const item = e.target.closest('.knowledge-point-item');
+                    if (item) {
+                        exitEditMode(item);
+                    }
+                }
+                
+                // 退出编辑模式的辅助函数
+                function exitEditMode(item) {
+                    const nameSpan = item.querySelector('.knowledge-point-name');
+                    const actionButtons = item.querySelector('.action-buttons');
+                    const editMode = item.querySelector('.edit-mode');
+                    const editInput = item.querySelector('.edit-input');
+                    
+                    if (editInput && nameSpan && actionButtons && editMode) {
+                        // 恢复原始值
+                        editInput.value = editInput.getAttribute('data-original');
+                        
+                        // 显示显示区域，隐藏编辑区域
+                        nameSpan.classList.remove('hidden');
+                        actionButtons.classList.remove('hidden');
+                        editMode.classList.add('hidden');
+                        
+                        // 移除事件监听器
+                        editInput.removeEventListener('keydown', editInput._keydownHandler);
+                        delete editInput._keydownHandler;
+                    }
+                }
+                
+                // 为编辑输入框添加键盘事件监听
+                document.addEventListener('focusin', function(e) {
+                    if (e.target.classList.contains('edit-input')) {
+                        const item = e.target.closest('.knowledge-point-item');
+                        if (!item || e.target._keydownHandler) return;
+                        
+                        // 创建键盘事件处理函数
+                        e.target._keydownHandler = async function(keyEvent) {
+                            if (keyEvent.key === 'Enter') {
+                                keyEvent.preventDefault();
+                                const saveBtn = item.querySelector('.save-edit-btn');
+                                if (saveBtn) {
+                                    saveBtn.click();
+                                }
+                            } else if (keyEvent.key === 'Escape') {
+                                keyEvent.preventDefault();
+                                const cancelBtn = item.querySelector('.cancel-edit-btn');
+                                if (cancelBtn) {
+                                    cancelBtn.click();
+                                }
+                            }
+                        };
+                        
+                        e.target.addEventListener('keydown', e.target._keydownHandler);
+                    }
+                });
+                
+                // 删除知识点
+                if (e.target.classList.contains('delete-point-btn')) {
+                    const pointId = parseInt(e.target.getAttribute('data-id'));
+                    await deleteKnowledgePoint(pointId);
+                }
             });
 
             // 成长轨迹时间筛选
@@ -1790,27 +2144,37 @@
                 await loadProgressOverview();
                 
                 // 加载学习时长统计
-                const timeResponse = await fetch(`${API_BASE}/analytics/study-time?period=week`);
-                const timeResult = await timeResponse.json();
-                if (timeResult.success) {
-                    // 延迟渲染，确保DOM已准备好
-                    setTimeout(() => {
-                        renderStudyTimeChart(timeResult.data);
-                    }, 50);
-                } else {
-                    console.error('加载学习时长统计失败:', timeResult.message);
+                try {
+                    const timeResponse = await fetch(`${API_BASE}/analytics/study-time?period=week`);
+                    if (timeResponse.ok) {
+                        const timeResult = await timeResponse.json();
+                        if (timeResult.success) {
+                            // 延迟渲染，确保DOM已准备好
+                            setTimeout(() => {
+                                renderStudyTimeChart(timeResult.data);
+                            }, 100);
+                        } else {
+                            console.error('加载学习时长统计失败:', timeResult.message);
+                            // 显示空图表
+                            setTimeout(() => {
+                                renderStudyTimeChart({
+                                    labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+                                    values: [],
+                                    period: 'week',
+                                    total_hours: 0,
+                                    avg_hours: 0
+                                });
+                            }, 100);
+                        }
+                    } else {
+                        console.error('加载学习时长统计失败: HTTP', timeResponse.status);
+                    }
+                } catch (error) {
+                    console.error('加载学习时长统计失败:', error);
                 }
 
                 // 加载知识点掌握分布
-                const levelResponse = await fetch(`${API_BASE}/analytics/knowledge-level`);
-                const levelResult = await levelResponse.json();
-                if (levelResult.success) {
-                    setTimeout(() => {
-                        renderKnowledgeLevelChart(levelResult.data);
-                    }, 50);
-                } else {
-                    console.error('加载知识点掌握分布失败:', levelResult.message);
-                }
+                await loadKnowledgePoints();
 
                 // 加载知识网络成长轨迹
                 await loadGrowthTrajectory('day');
@@ -2646,12 +3010,37 @@
         async function loadStudyTimeData(period) {
             try {
                 const response = await fetch(`${API_BASE}/analytics/study-time?period=${period}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP错误: ${response.status}`);
+                }
                 const result = await response.json();
                 if (result.success) {
                     renderStudyTimeChart(result.data);
+                } else {
+                    console.error('加载学习时长数据失败:', result.message || '未知错误');
+                    // 即使失败也显示空图表
+                    renderStudyTimeChart({
+                        labels: period === 'week' ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] : 
+                                period === 'month' ? ['第1周', '第2周', '第3周', '第4周'] : 
+                                ['第1月', '第2月', '第3月'],
+                        values: [],
+                        period: period,
+                        total_hours: 0,
+                        avg_hours: 0
+                    });
                 }
             } catch (error) {
                 console.error('加载学习时长数据失败:', error);
+                // 显示空图表
+                renderStudyTimeChart({
+                    labels: period === 'week' ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] : 
+                            period === 'month' ? ['第1周', '第2周', '第3周', '第4周'] : 
+                            ['第1月', '第2月', '第3月'],
+                    values: [],
+                    period: period,
+                    total_hours: 0,
+                    avg_hours: 0
+                });
             }
         }
 
@@ -2669,52 +3058,249 @@
                 existingChart.dispose();
             }
             
+            // 确保数据格式正确
+            if (!data) {
+                data = {
+                    labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+                    values: [],
+                    period: 'week',
+                    total_hours: 0,
+                    avg_hours: 0
+                };
+            }
+            if (!data.values || !Array.isArray(data.values)) {
+                data.values = [];
+            }
+            if (!data.labels || !Array.isArray(data.labels)) {
+                data.labels = data.period === 'week' ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] :
+                             data.period === 'month' ? ['第1周', '第2周', '第3周', '第4周'] :
+                             ['第1月', '第2月', '第3月'];
+            }
+            
             const chart = echarts.init(chartElement);
+            
+            // 计算最大值用于动态调整Y轴
+            const maxValue = Math.max(...(data.values || [0]), 1);
+            const yAxisMax = Math.ceil(maxValue * 1.2 * 10) / 10; // 向上取整并留20%余量
+            
             const option = {
+                backgroundColor: 'transparent',
                 tooltip: {
                     trigger: 'axis',
+                    backgroundColor: 'rgba(255, 255, 255, 0.98)',
+                    borderColor: '#e5e7eb',
+                    borderWidth: 1,
+                    padding: [12, 16],
+                    textStyle: {
+                        color: '#374151',
+                        fontSize: 13
+                    },
                     axisPointer: {
-                        type: 'shadow'
+                        type: 'shadow',
+                        shadowStyle: {
+                            color: 'rgba(59, 130, 246, 0.1)'
+                        }
                     },
                     formatter: function(params) {
-                        let result = params[0].name + '<br/>';
-                        params.forEach(param => {
-                            result += `${param.seriesName}: ${param.value} 小时<br/>`;
-                        });
+                        const param = params[0];
+                        const dayInfo = param.name.split('\n');
+                        let result = '<div style="margin-bottom: 8px; font-weight: 600; color: #111827;">';
+                        result += dayInfo.length > 1 ? `${dayInfo[0]} ${dayInfo[1]}` : param.name;
+                        result += '</div>';
+                        result += `<div style="display: flex; align-items: center; margin-top: 4px;">`;
+                        result += `<span style="display: inline-block; width: 10px; height: 10px; background: linear-gradient(135deg, #3b82f6, #2563eb); border-radius: 2px; margin-right: 8px;"></span>`;
+                        result += `<span style="color: #4b5563;">${param.seriesName}: <span style="font-weight: 600; color: #1f2937;">${param.value}</span> 小时</span>`;
+                        result += `</div>`;
                         return result;
                     }
                 },
                 grid: {
-                    left: '3%',
-                    right: '4%',
-                    bottom: '3%',
+                    left: '8%',
+                    right: '6%',
+                    top: '12%',
+                    bottom: '15%',
                     containLabel: true
                 },
                 xAxis: {
                     type: 'category',
-                    data: data.labels || ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+                    data: data.labels || ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+                    axisLine: {
+                        lineStyle: {
+                            color: '#e5e7eb',
+                            width: 1
+                        }
+                    },
+                    axisTick: {
+                        show: false
+                    },
+                    axisLabel: {
+                        interval: 0,
+                        rotate: 0,
+                        color: '#6b7280',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        margin: 12,
+                        formatter: function(value) {
+                            // 如果标签包含换行符，保持换行显示
+                            if (value.includes('\n')) {
+                                const parts = value.split('\n');
+                                return '{day|' + parts[0] + '}\n{date|' + parts[1] + '}';
+                            }
+                            return value;
+                        },
+                        rich: {
+                            day: {
+                                color: '#374151',
+                                fontWeight: 600,
+                                fontSize: 13
+                            },
+                            date: {
+                                color: '#9ca3af',
+                                fontSize: 11
+                            }
+                        }
+                    }
                 },
                 yAxis: {
                     type: 'value',
-                    name: '小时'
+                    name: '小时',
+                    nameTextStyle: {
+                        color: '#6b7280',
+                        fontSize: 12,
+                        padding: [0, 0, 0, 8]
+                    },
+                    min: 0,
+                    max: yAxisMax,
+                    minInterval: 0.1,
+                    splitNumber: 5,
+                    axisLine: {
+                        show: false
+                    },
+                    axisTick: {
+                        show: false
+                    },
+                    axisLabel: {
+                        color: '#9ca3af',
+                        fontSize: 11,
+                        formatter: function(value) {
+                            return value.toFixed(1);
+                        }
+                    },
+                    splitLine: {
+                        lineStyle: {
+                            color: '#f3f4f6',
+                            type: 'dashed',
+                            width: 1
+                        }
+                    }
                 },
                 series: [{
                     name: '学习时长',
                     type: 'bar',
-                    barWidth: '40%',
-                    data: data.values || [1.2, 0.8, 1.8, 1.0, 1.5, 2.3, 1.4],
+                    barWidth: '50%',
+                    barMinHeight: 2,
+                    data: data.values || [],
                     itemStyle: {
-                        color: '#3b82f6'
+                        color: {
+                            type: 'linear',
+                            x: 0,
+                            y: 0,
+                            x2: 0,
+                            y2: 1,
+                            colorStops: [
+                                {
+                                    offset: 0,
+                                    color: '#60a5fa' // lighter blue
+                                },
+                                {
+                                    offset: 0.5,
+                                    color: '#3b82f6' // main blue
+                                },
+                                {
+                                    offset: 1,
+                                    color: '#2563eb' // darker blue
+                                }
+                            ]
+                        },
+                        borderRadius: [6, 6, 0, 0],
+                        shadowColor: 'rgba(59, 130, 246, 0.3)',
+                        shadowBlur: 8,
+                        shadowOffsetY: 4
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            shadowColor: 'rgba(59, 130, 246, 0.5)',
+                            shadowBlur: 12,
+                            shadowOffsetY: 6
+                        },
+                        scale: true
+                    },
+                    label: {
+                        show: true,
+                        position: 'top',
+                        color: '#374151',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        offset: [0, -4],
+                        formatter: function(params) {
+                            if (params.value > 0) {
+                                const hours = params.value;
+                                if (hours >= 1) {
+                                    return hours.toFixed(1) + 'h';
+                                } else {
+                                    return (hours * 60).toFixed(0) + 'm';
+                                }
+                            }
+                            return '';
+                        }
+                    },
+                    animationDelay: function (idx) {
+                        return idx * 50;
                     }
-                }]
+                }],
+                animationEasing: 'elasticOut',
+                animationDuration: 1000
             };
             chart.setOption(option);
             
             // 显示统计摘要
             const summaryEl = document.getElementById('study-time-summary');
-            if (summaryEl && data.total_hours !== undefined) {
+            if (summaryEl) {
+                const totalHours = data.total_hours !== undefined ? data.total_hours : 0;
+                const avgHours = data.avg_hours !== undefined ? data.avg_hours : 0;
                 const periodText = data.period === 'week' ? '天' : data.period === 'month' ? '周' : '月';
-                summaryEl.innerHTML = `总时长: ${data.total_hours} 小时 | 平均: ${data.avg_hours} 小时/${periodText}`;
+                
+                // 格式化总时长显示
+                let totalDisplay = '';
+                if (totalHours >= 1) {
+                    totalDisplay = totalHours.toFixed(1) + ' 小时';
+                } else if (totalHours > 0) {
+                    totalDisplay = (totalHours * 60).toFixed(0) + ' 分钟';
+                } else {
+                    totalDisplay = '0 小时';
+                }
+                
+                // 格式化平均时长显示
+                let avgDisplay = '';
+                if (avgHours >= 1) {
+                    avgDisplay = avgHours.toFixed(1) + ' 小时';
+                } else if (avgHours > 0) {
+                    avgDisplay = (avgHours * 60).toFixed(0) + ' 分钟';
+                } else {
+                    avgDisplay = '0 小时';
+                }
+                
+                summaryEl.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+                        <span class="text-gray-600">总时长: <span class="font-semibold text-gray-800">${totalDisplay}</span></span>
+                    </div>
+                    <div class="text-gray-300">|</div>
+                    <div class="flex items-center space-x-2">
+                        <div class="w-2 h-2 rounded-full bg-blue-400"></div>
+                        <span class="text-gray-600">平均: <span class="font-semibold text-gray-800">${avgDisplay}/${periodText}</span></span>
+                    </div>
+                `;
             }
             
             // 响应窗口大小变化
@@ -2738,29 +3324,107 @@
             }
             
             const chart = echarts.init(chartElement);
+            const levels = data.levels || [
+                { value: 0, name: '已掌握' },
+                { value: 0, name: '学习中' },
+                { value: 0, name: '待学习' }
+            ];
+            
             const option = {
+                backgroundColor: 'transparent',
                 tooltip: {
-                    trigger: 'item'
+                    trigger: 'item',
+                    backgroundColor: 'rgba(255, 255, 255, 0.98)',
+                    borderColor: '#e5e7eb',
+                    borderWidth: 1,
+                    padding: [12, 16],
+                    textStyle: {
+                        color: '#374151',
+                        fontSize: 13
+                    },
+                    formatter: function(params) {
+                        const total = params.value + (params.percent || 0);
+                        return `
+                            <div style="margin-bottom: 8px; font-weight: 600; color: #111827;">${params.name}</div>
+                            <div style="display: flex; align-items: center; margin-top: 4px;">
+                                <span style="display: inline-block; width: 10px; height: 10px; background: ${params.color}; border-radius: 2px; margin-right: 8px;"></span>
+                                <span style="color: #4b5563;">数量: <span style="font-weight: 600; color: #1f2937;">${params.value}</span></span>
+                            </div>
+                            <div style="margin-top: 4px; color: #6b7280; font-size: 12px;">占比: ${params.percent}%</div>
+                        `;
+                    }
                 },
                 legend: {
                     orient: 'vertical',
-                    left: 'left'
+                    left: 'left',
+                    top: 'center',
+                    itemGap: 16,
+                    itemWidth: 14,
+                    itemHeight: 14,
+                    textStyle: {
+                        color: '#374151',
+                        fontSize: 13,
+                        fontWeight: 500
+                    },
+                    formatter: function(name) {
+                        const item = levels.find(l => l.name === name);
+                        return `${name} (${item ? item.value : 0})`;
+                    }
                 },
                 series: [{
                     name: '掌握程度',
                     type: 'pie',
-                    radius: '60%',
-                    data: data.levels || [
-                        { value: 35, name: '已掌握' },
-                        { value: 45, name: '学习中' },
-                        { value: 20, name: '待学习' }
-                    ],
+                    radius: ['40%', '70%'],
+                    center: ['60%', '50%'],
+                    avoidLabelOverlap: true,
+                    itemStyle: {
+                        borderRadius: 8,
+                        borderColor: '#fff',
+                        borderWidth: 2
+                    },
+                    label: {
+                        show: true,
+                        formatter: function(params) {
+                            if (params.percent > 5) {
+                                return `{name|${params.name}}\n{value|${params.value}}`;
+                            }
+                            return '';
+                        },
+                        rich: {
+                            name: {
+                                fontSize: 12,
+                                color: '#374151',
+                                fontWeight: 500
+                            },
+                            value: {
+                                fontSize: 14,
+                                color: '#111827',
+                                fontWeight: 600,
+                                padding: [4, 0, 0, 0]
+                            }
+                        }
+                    },
                     emphasis: {
                         itemStyle: {
-                            shadowBlur: 10,
+                            shadowBlur: 20,
                             shadowOffsetX: 0,
-                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                            shadowColor: 'rgba(0, 0, 0, 0.3)'
+                        },
+                        scale: true,
+                        scaleSize: 5
+                    },
+                    data: levels.map(item => ({
+                        value: item.value,
+                        name: item.name,
+                        itemStyle: {
+                            color: item.name === '已掌握' ? '#10b981' : 
+                                   item.name === '学习中' ? '#3b82f6' : '#f59e0b'
                         }
+                    })),
+                    animationType: 'scale',
+                    animationEasing: 'elasticOut',
+                    animationDelay: function (idx) {
+                        return Math.random() * 200;
                     }
                 }]
             };
@@ -2770,6 +3434,167 @@
             const resizeHandler = () => chart.resize();
             window.removeEventListener('resize', resizeHandler);
             window.addEventListener('resize', resizeHandler);
+        }
+        
+        // 加载知识点数据
+        async function loadKnowledgePoints() {
+            try {
+                const response = await fetch(`${API_BASE}/analytics/knowledge-level`);
+                const result = await response.json();
+                if (result.success) {
+                    // 更新图表
+                    renderKnowledgeLevelChart(result.data);
+                    
+                    // 更新管理面板
+                    updateKnowledgePointsManager(result.data);
+                } else {
+                    console.error('加载知识点数据失败:', result.message);
+                }
+            } catch (error) {
+                console.error('加载知识点数据失败:', error);
+            }
+        }
+        
+        // 更新知识点管理面板
+        function updateKnowledgePointsManager(data) {
+            const knowledgePoints = data.knowledge_points || {
+                mastered: [],
+                learning: [],
+                pending: []
+            };
+            
+            // 更新数量输入框
+            document.getElementById('mastered-count').value = knowledgePoints.mastered.length;
+            document.getElementById('learning-count').value = knowledgePoints.learning.length;
+            document.getElementById('pending-count').value = knowledgePoints.pending.length;
+            
+            // 渲染知识点列表
+            renderKnowledgePointList('mastered-list', knowledgePoints.mastered, 2);
+            renderKnowledgePointList('learning-list', knowledgePoints.learning, 1);
+            renderKnowledgePointList('pending-list', knowledgePoints.pending, 0);
+        }
+        
+        // 渲染知识点列表
+        function renderKnowledgePointList(containerId, points, level) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            if (points.length === 0) {
+                container.innerHTML = '<div class="text-sm text-gray-500 italic text-center py-4">暂无知识点</div>';
+                return;
+            }
+            
+            container.innerHTML = points.map(point => `
+                <div class="knowledge-point-item flex items-center justify-between bg-white rounded-lg px-3 py-2.5 border border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all" data-id="${point.id}" data-level="${level}">
+                    <span class="knowledge-point-name text-sm text-gray-700 flex-1 font-medium">${escapeHtml(point.name)}</span>
+                    <div class="flex items-center space-x-2 action-buttons">
+                        <button class="edit-point-btn text-xs text-blue-600 hover:text-blue-700 px-2.5 py-1 rounded-md hover:bg-blue-50 transition-colors font-medium" data-id="${point.id}" data-level="${level}">
+                            编辑
+                        </button>
+                        <button class="delete-point-btn text-xs text-red-600 hover:text-red-700 px-2.5 py-1 rounded-md hover:bg-red-50 transition-colors font-medium" data-id="${point.id}">
+                            删除
+                        </button>
+                    </div>
+                    <div class="edit-mode hidden flex-1 items-center space-x-2">
+                        <input type="text" class="edit-input flex-1 px-3 py-2 text-sm border-2 border-blue-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${escapeHtml(point.name)}" data-original="${escapeHtml(point.name)}" placeholder="请输入知识点名称">
+                        <button class="save-edit-btn text-xs font-medium text-white bg-green-500 hover:bg-green-600 px-3 py-2 rounded-lg transition-colors shadow-sm" data-id="${point.id}" data-level="${level}" title="保存 (Enter)">
+                            保存
+                        </button>
+                        <button class="cancel-edit-btn text-xs font-medium text-gray-600 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg transition-colors" title="取消 (Esc)">
+                            取消
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // HTML转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // 保存知识点
+        async function saveKnowledgePoint(name, masteryLevel, pointId = null) {
+            try {
+                const response = await fetch(`${API_BASE}/analytics/knowledge-points`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        id: pointId,
+                        name: name,
+                        mastery_level: masteryLevel
+                    })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    await loadKnowledgePoints();
+                    return true;
+                } else {
+                    alert('保存失败: ' + result.message);
+                    return false;
+                }
+            } catch (error) {
+                console.error('保存知识点失败:', error);
+                alert('保存失败，请重试');
+                return false;
+            }
+        }
+        
+        // 删除知识点
+        async function deleteKnowledgePoint(pointId) {
+            if (!confirm('确定要删除这个知识点吗？')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/analytics/knowledge-points/${pointId}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    await loadKnowledgePoints();
+                } else {
+                    alert('删除失败: ' + result.message);
+                }
+            } catch (error) {
+                console.error('删除知识点失败:', error);
+                alert('删除失败，请重试');
+            }
+        }
+        
+        // 批量保存数量
+        async function saveKnowledgePointCounts() {
+            const mastered = parseInt(document.getElementById('mastered-count').value) || 0;
+            const learning = parseInt(document.getElementById('learning-count').value) || 0;
+            const pending = parseInt(document.getElementById('pending-count').value) || 0;
+            
+            try {
+                const response = await fetch(`${API_BASE}/analytics/knowledge-points/batch`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        mastered: mastered,
+                        learning: learning,
+                        pending: pending
+                    })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    await loadKnowledgePoints();
+                    alert('数量已更新');
+                } else {
+                    alert('更新失败: ' + result.message);
+                }
+            } catch (error) {
+                console.error('更新数量失败:', error);
+                alert('更新失败，请重试');
+            }
         }
 
         // 生成学习报告
@@ -2869,16 +3694,85 @@
                         
                         <!-- 学习时长统计 -->
                         <div class="mb-6">
-                            <h3 class="text-xl font-bold mb-4 text-gray-800">最近7天学习时长</h3>
-                            <div class="bg-gray-50 rounded-lg p-4">
-                                <p class="text-lg font-bold text-blue-600 mb-2">总时长: ${report.total_study_hours} 小时</p>
-                                <div class="space-y-1">
+                            <h3 class="text-xl font-bold mb-4 text-gray-800 flex items-center">
+                                <iconify-icon class="mr-2 text-blue-500" icon="mdi:clock-outline"></iconify-icon>
+                                最近7天学习时长
+                            </h3>
+                            <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-5 border border-blue-200">
+                                <p class="text-xl font-bold text-blue-600 mb-3">总时长: ${report.total_study_hours} 小时</p>
+                                <div class="space-y-2 bg-white rounded-lg p-3">
                                     ${report.study_time_week.map(day => `
-                                        <div class="flex justify-between text-sm">
-                                            <span class="text-gray-600">${day.date}</span>
-                                            <span class="font-medium">${day.hours} 小时</span>
+                                        <div class="flex justify-between items-center text-sm py-1 border-b border-gray-100 last:border-b-0">
+                                            <span class="text-gray-700 font-medium">${day.date}</span>
+                                            <span class="font-semibold text-blue-600">${day.hours} 小时</span>
                                         </div>
                                     `).join('')}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 知识点学习进度 -->
+                        <div class="mb-6">
+                            <h3 class="text-xl font-bold mb-4 text-gray-800 flex items-center">
+                                <iconify-icon class="mr-2 text-green-500" icon="mdi:book-education-outline"></iconify-icon>
+                                知识点学习进度
+                            </h3>
+                            <div class="space-y-4">
+                                <!-- 已掌握 -->
+                                <div class="border-2 border-green-200 rounded-lg p-4 bg-gradient-to-br from-green-50 to-green-100/50">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h4 class="text-lg font-semibold text-green-700 flex items-center">
+                                            <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+                                            已掌握 (${report.knowledge_points?.mastered?.count || 0})
+                                        </h4>
+                                    </div>
+                                    <div class="bg-white rounded-lg p-3 max-h-40 overflow-y-auto">
+                                        ${(report.knowledge_points?.mastered?.items && report.knowledge_points.mastered.items.length > 0) 
+                                            ? report.knowledge_points.mastered.items.map(item => `
+                                                <div class="py-2 px-3 mb-1 bg-green-50 rounded text-sm text-gray-700 border-l-4 border-green-500">
+                                                    ${item.name}
+                                                </div>
+                                            `).join('') 
+                                            : '<p class="text-sm text-gray-500 italic text-center py-2">暂无已掌握的知识点</p>'}
+                                    </div>
+                                </div>
+                                
+                                <!-- 学习中 -->
+                                <div class="border-2 border-blue-200 rounded-lg p-4 bg-gradient-to-br from-blue-50 to-blue-100/50">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h4 class="text-lg font-semibold text-blue-700 flex items-center">
+                                            <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
+                                            学习中 (${report.knowledge_points?.learning?.count || 0})
+                                        </h4>
+                                    </div>
+                                    <div class="bg-white rounded-lg p-3 max-h-40 overflow-y-auto">
+                                        ${(report.knowledge_points?.learning?.items && report.knowledge_points.learning.items.length > 0) 
+                                            ? report.knowledge_points.learning.items.map(item => `
+                                                <div class="py-2 px-3 mb-1 bg-blue-50 rounded text-sm text-gray-700 border-l-4 border-blue-500">
+                                                    ${item.name}
+                                                </div>
+                                            `).join('') 
+                                            : '<p class="text-sm text-gray-500 italic text-center py-2">暂无学习中的知识点</p>'}
+                                    </div>
+                                </div>
+                                
+                                <!-- 待学习 -->
+                                <div class="border-2 border-orange-200 rounded-lg p-4 bg-gradient-to-br from-orange-50 to-orange-100/50">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h4 class="text-lg font-semibold text-orange-700 flex items-center">
+                                            <span class="w-3 h-3 rounded-full bg-orange-500 mr-2"></span>
+                                            待学习 (${report.knowledge_points?.pending?.count || 0})
+                                        </h4>
+                                    </div>
+                                    <div class="bg-white rounded-lg p-3 max-h-40 overflow-y-auto">
+                                        ${(report.knowledge_points?.pending?.items && report.knowledge_points.pending.items.length > 0) 
+                                            ? report.knowledge_points.pending.items.map(item => `
+                                                <div class="py-2 px-3 mb-1 bg-orange-50 rounded text-sm text-gray-700 border-l-4 border-orange-500">
+                                                    ${item.name}
+                                                </div>
+                                            `).join('') 
+                                            : '<p class="text-sm text-gray-500 italic text-center py-2">暂无待学习的知识点</p>'}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2914,6 +3808,10 @@
 
         // 导出报告为文本文件
         function exportReportAsText(report) {
+            const masteredItems = report.knowledge_points?.mastered?.items || [];
+            const learningItems = report.knowledge_points?.learning?.items || [];
+            const pendingItems = report.knowledge_points?.pending?.items || [];
+            
             const reportText = `
 学习报告
 生成时间: ${new Date(report.generated_at).toLocaleString('zh-CN')}
@@ -2928,11 +3826,33 @@
 ${report.node_distribution.map(n => `${n.type}: ${n.count}`).join('\n')}
 
 ========== 最近上传的文档 ==========
-${report.recent_documents.map(doc => `- ${doc.title} (${doc.type.toUpperCase()}) - ${new Date(doc.date).toLocaleDateString('zh-CN')}`).join('\n')}
+${report.recent_documents.length > 0 
+    ? report.recent_documents.map(doc => `- ${doc.title} (${doc.type.toUpperCase()}) - ${new Date(doc.date).toLocaleDateString('zh-CN')}`).join('\n')
+    : '暂无文档'}
 
 ========== 最近7天学习时长 ==========
 总时长: ${report.total_study_hours} 小时
 ${report.study_time_week.map(day => `${day.date}: ${day.hours} 小时`).join('\n')}
+
+========== 知识点学习进度 ==========
+
+【已掌握知识点】 (${report.knowledge_points?.mastered?.count || 0}个)
+${masteredItems.length > 0 
+    ? masteredItems.map((item, index) => `${index + 1}. ${item.name}`).join('\n')
+    : '暂无已掌握的知识点'}
+
+【学习中知识点】 (${report.knowledge_points?.learning?.count || 0}个)
+${learningItems.length > 0 
+    ? learningItems.map((item, index) => `${index + 1}. ${item.name}`).join('\n')
+    : '暂无学习中的知识点'}
+
+【待学习知识点】 (${report.knowledge_points?.pending?.count || 0}个)
+${pendingItems.length > 0 
+    ? pendingItems.map((item, index) => `${index + 1}. ${item.name}`).join('\n')
+    : '暂无待学习的知识点'}
+
+=====================================
+报告生成完成
             `.trim();
             
             const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });

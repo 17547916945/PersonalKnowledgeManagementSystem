@@ -371,6 +371,19 @@ class DatabaseManager:
                 )
             ''')
             
+            # 用户手动管理的知识点表
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_manual_knowledge_points (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,  -- 知识点名称
+                    mastery_level INTEGER NOT NULL,  -- 0=待学习, 1=学习中, 2=已掌握
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            ''')
+            
             # 创建默认方案（如果不存在）
             default_scheme = conn.execute('SELECT id FROM knowledge_graph_schemes WHERE is_default = 1').fetchone()
             if not default_scheme:
@@ -2146,26 +2159,38 @@ def create_app():
         with db_manager.get_connection() as conn:
             if period == 'week':
                 # 获取最近7天的学习时长
-                labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
                 values = []
+                labels = []
                 from datetime import datetime, timedelta
                 today = datetime.now().date()
+                weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
                 
                 for i in range(6, -1, -1):  # 从6天前到今天
                     target_date = today - timedelta(days=i)
-                    start_time = datetime.combine(target_date, datetime.min.time())
-                    end_time = datetime.combine(target_date, datetime.max.time())
+                    # 生成标签：显示星期几和日期
+                    weekday = target_date.weekday()  # 0=周一, 6=周日
+                    label = f"{weekdays[weekday]}\n{target_date.strftime('%m/%d')}"
+                    labels.append(label)
                     
-                    # 查询该天的学习时长（秒转小时）
+                    start_time = datetime.combine(target_date, datetime.min.time())
+                    # 使用下一天的开始时间作为结束时间，使用 < 比较，这样可以包含当天23:59:59的数据
+                    end_time = datetime.combine(target_date, datetime.max.time()) + timedelta(seconds=1)
+                    
+                    # 查询该天的学习时长（秒转小时）- 只统计在线时长（study类型）
+                    # 使用 date() 函数提取日期部分进行比较，更可靠
+                    date_str = target_date.strftime('%Y-%m-%d')
                     result = conn.execute('''
                         SELECT COALESCE(SUM(duration), 0) as total_duration
                         FROM user_behaviors
                         WHERE user_id = ?
-                        AND timestamp >= ? AND timestamp < ?
-                        AND action_type IN ('view', 'read', 'study')
-                    ''', (user_id, start_time.isoformat(), end_time.isoformat())).fetchone()
+                        AND date(timestamp) = date(?)
+                        AND action_type = 'study'
+                        AND duration IS NOT NULL
+                        AND duration > 0
+                    ''', (user_id, date_str)).fetchone()
                     
-                    hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
+                    total_duration = result['total_duration'] if result and result['total_duration'] else 0
+                    hours = round(total_duration / 3600.0, 1) if total_duration > 0 else 0.0
                     values.append(hours)
                     
             elif period == 'month':
@@ -2178,18 +2203,22 @@ def create_app():
                 for i in range(3, -1, -1):  # 最近4周
                     week_start = today - timedelta(days=today.weekday() + 7 * i)
                     week_end = week_start + timedelta(days=6)
-                    start_time = datetime.combine(week_start, datetime.min.time())
-                    end_time = datetime.combine(week_end, datetime.max.time())
+                    start_date_str = week_start.strftime('%Y-%m-%d')
+                    end_date_str = week_end.strftime('%Y-%m-%d')
                     
                     result = conn.execute('''
                         SELECT COALESCE(SUM(duration), 0) as total_duration
                         FROM user_behaviors
                         WHERE user_id = ? 
-                        AND timestamp >= ? AND timestamp <= ?
-                        AND action_type IN ('view', 'read', 'study')
-                    ''', (user_id, start_time.isoformat(), end_time.isoformat())).fetchone()
+                        AND date(timestamp) >= date(?)
+                        AND date(timestamp) <= date(?)
+                        AND action_type = 'study'
+                        AND duration IS NOT NULL
+                        AND duration > 0
+                    ''', (user_id, start_date_str, end_date_str)).fetchone()
                     
-                    hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
+                    total_duration = result['total_duration'] if result and result['total_duration'] else 0
+                    hours = round(total_duration / 3600.0, 1) if total_duration > 0 else 0.0
                     values.append(hours)
                     
             else:  # quarter
@@ -2207,24 +2236,31 @@ def create_app():
                         month += 12
                         year -= 1
                     
-                    month_start = datetime(year, month, 1)
+                    month_start = datetime(year, month, 1).date()
                     if month == 12:
-                        month_end = datetime(year + 1, 1, 1) - timedelta(days=1)
+                        month_end = datetime(year + 1, 1, 1).date() - timedelta(days=1)
                     else:
-                        month_end = datetime(year, month + 1, 1) - timedelta(days=1)
+                        month_end = datetime(year, month + 1, 1).date() - timedelta(days=1)
                     
                     if i == 0:
                         month_end = today
+                    
+                    start_date_str = month_start.strftime('%Y-%m-%d')
+                    end_date_str = month_end.strftime('%Y-%m-%d')
                     
                     result = conn.execute('''
                         SELECT COALESCE(SUM(duration), 0) as total_duration
                         FROM user_behaviors
                         WHERE user_id = ? 
-                        AND timestamp >= ? AND timestamp <= ?
-                        AND action_type IN ('view', 'read', 'study')
-                    ''', (user_id, month_start.isoformat(), month_end.isoformat())).fetchone()
+                        AND date(timestamp) >= date(?)
+                        AND date(timestamp) <= date(?)
+                        AND action_type = 'study'
+                        AND duration IS NOT NULL
+                        AND duration > 0
+                    ''', (user_id, start_date_str, end_date_str)).fetchone()
                     
-                    hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
+                    total_duration = result['total_duration'] if result and result['total_duration'] else 0
+                    hours = round(total_duration / 3600.0, 1) if total_duration > 0 else 0.0
                     values.append(hours)
             
             # 计算总时长和平均时长
@@ -2245,63 +2281,211 @@ def create_app():
     @app.route('/api/analytics/knowledge-level')
     @login_required
     def get_knowledge_level():
-        """获取知识点掌握分布（基于真实学习数据计算）"""
+        """获取知识点掌握分布（基于用户手动输入的数据）"""
         user_id = session.get('user_id', 1)
         
         with db_manager.get_connection() as conn:
-            # 统计来自未删除文档的所有类型节点
-            total_nodes = conn.execute('''
-                SELECT COUNT(*) FROM knowledge_nodes kn
-                LEFT JOIN documents d ON kn.document_id = d.id
-                WHERE (kn.document_id IS NULL OR d.is_deleted = 0)
-            ''').fetchone()[0]
+            # 获取用户手动管理的知识点列表
+            points = conn.execute('''
+                SELECT id, name, mastery_level, created_at, updated_at
+                FROM user_manual_knowledge_points
+                WHERE user_id = ?
+                ORDER BY mastery_level DESC, updated_at DESC
+            ''', (user_id,)).fetchall()
             
-            if total_nodes == 0:
-                levels = [
-                    {'value': 0, 'name': '已掌握'},
-                    {'value': 0, 'name': '学习中'},
-                    {'value': 0, 'name': '待学习'}
-                ]
-            else:
-                # 基于真实的学习数据计算掌握分布
-                # 统计已掌握的知识点（mastery_level = 2）
-                mastered = conn.execute('''
-                    SELECT COUNT(DISTINCT kpl.knowledge_node_id) 
-                    FROM knowledge_point_learning kpl
-                    INNER JOIN knowledge_nodes kn ON kpl.knowledge_node_id = kn.id
-                    LEFT JOIN documents d ON kn.document_id = d.id
-                    WHERE kpl.user_id = ? 
-                    AND kpl.mastery_level = 2
-                    AND (kn.document_id IS NULL OR d.is_deleted = 0)
-                ''', (user_id,)).fetchone()[0]
+            # 统计各等级的数量
+            mastered = 0
+            learning = 0
+            pending = 0
+            
+            knowledge_points = {
+                'mastered': [],
+                'learning': [],
+                'pending': []
+            }
+            
+            for point in points:
+                level = point['mastery_level']
+                point_data = {
+                    'id': point['id'],
+                    'name': point['name'],
+                    'created_at': point['created_at'],
+                    'updated_at': point['updated_at']
+                }
                 
-                # 统计学习中的知识点（mastery_level = 1）
-                learning = conn.execute('''
-                    SELECT COUNT(DISTINCT kpl.knowledge_node_id) 
-                    FROM knowledge_point_learning kpl
-                    INNER JOIN knowledge_nodes kn ON kpl.knowledge_node_id = kn.id
-                    LEFT JOIN documents d ON kn.document_id = d.id
-                    WHERE kpl.user_id = ? 
-                    AND kpl.mastery_level = 1
-                    AND (kn.document_id IS NULL OR d.is_deleted = 0)
-                ''', (user_id,)).fetchone()[0]
-                
-                # 剩余的是待学习的知识点
-                pending = total_nodes - mastered - learning
-                
-                levels = [
-                    {'value': mastered, 'name': '已掌握'},
-                    {'value': learning, 'name': '学习中'},
-                    {'value': pending, 'name': '待学习'}
-                ]
+                if level == 2:  # 已掌握
+                    mastered += 1
+                    knowledge_points['mastered'].append(point_data)
+                elif level == 1:  # 学习中
+                    learning += 1
+                    knowledge_points['learning'].append(point_data)
+                else:  # 待学习
+                    pending += 1
+                    knowledge_points['pending'].append(point_data)
+            
+            levels = [
+                {'value': mastered, 'name': '已掌握'},
+                {'value': learning, 'name': '学习中'},
+                {'value': pending, 'name': '待学习'}
+            ]
+            
+            total = mastered + learning + pending
         
         return jsonify({
             'success': True,
             'data': {
                 'levels': levels,
-                'total': total_nodes
+                'total': total,
+                'knowledge_points': knowledge_points
             }
         })
+    
+    @app.route('/api/analytics/knowledge-points', methods=['POST'])
+    @login_required
+    def save_knowledge_point():
+        """保存或更新知识点"""
+        user_id = session.get('user_id', 1)
+        data = request.get_json(force=True, silent=True) or {}
+        
+        point_id = data.get('id')  # 如果有id则是更新，否则是新增
+        name = data.get('name', '').strip()
+        mastery_level = data.get('mastery_level', 0)
+        
+        if not name:
+            return jsonify({'success': False, 'message': '知识点名称不能为空'}), 400
+        
+        if mastery_level not in [0, 1, 2]:
+            return jsonify({'success': False, 'message': '掌握等级无效'}), 400
+        
+        try:
+            with db_manager.get_connection() as conn:
+                from datetime import datetime
+                now = datetime.now().isoformat()
+                
+                if point_id:
+                    # 更新
+                    conn.execute('''
+                        UPDATE user_manual_knowledge_points
+                        SET name = ?, mastery_level = ?, updated_at = ?
+                        WHERE id = ? AND user_id = ?
+                    ''', (name, mastery_level, now, point_id, user_id))
+                    conn.commit()
+                    return jsonify({'success': True, 'message': '知识点已更新'})
+                else:
+                    # 新增
+                    cursor = conn.execute('''
+                        INSERT INTO user_manual_knowledge_points (user_id, name, mastery_level)
+                        VALUES (?, ?, ?)
+                    ''', (user_id, name, mastery_level))
+                    conn.commit()
+                    return jsonify({
+                        'success': True,
+                        'message': '知识点已添加',
+                        'id': cursor.lastrowid
+                    })
+        except Exception as e:
+            print(f"保存知识点失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/analytics/knowledge-points/<int:point_id>', methods=['DELETE'])
+    @login_required
+    def delete_knowledge_point(point_id):
+        """删除知识点"""
+        user_id = session.get('user_id', 1)
+        
+        try:
+            with db_manager.get_connection() as conn:
+                conn.execute('''
+                    DELETE FROM user_manual_knowledge_points
+                    WHERE id = ? AND user_id = ?
+                ''', (point_id, user_id))
+                conn.commit()
+                return jsonify({'success': True, 'message': '知识点已删除'})
+        except Exception as e:
+            print(f"删除知识点失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
+    
+    @app.route('/api/analytics/knowledge-points/batch', methods=['POST'])
+    @login_required
+    def batch_update_knowledge_points():
+        """批量更新知识点（用于快速设置数量）"""
+        user_id = session.get('user_id', 1)
+        data = request.get_json(force=True, silent=True) or {}
+        
+        mastered_count = max(0, int(data.get('mastered', 0)))
+        learning_count = max(0, int(data.get('learning', 0)))
+        pending_count = max(0, int(data.get('pending', 0)))
+        
+        try:
+            with db_manager.get_connection() as conn:
+                # 获取当前各等级的知识点
+                mastered_points = [p['id'] for p in conn.execute('''
+                    SELECT id FROM user_manual_knowledge_points
+                    WHERE user_id = ? AND mastery_level = 2
+                ''', (user_id,)).fetchall()]
+                
+                learning_points = [p['id'] for p in conn.execute('''
+                    SELECT id FROM user_manual_knowledge_points
+                    WHERE user_id = ? AND mastery_level = 1
+                ''', (user_id,)).fetchall()]
+                
+                pending_points = [p['id'] for p in conn.execute('''
+                    SELECT id FROM user_manual_knowledge_points
+                    WHERE user_id = ? AND mastery_level = 0
+                ''', (user_id,)).fetchall()]
+                
+                from datetime import datetime
+                now = datetime.now().isoformat()
+                
+                # 调整已掌握的知识点数量
+                if len(mastered_points) < mastered_count:
+                    # 需要添加
+                    for i in range(mastered_count - len(mastered_points)):
+                        conn.execute('''
+                            INSERT INTO user_manual_knowledge_points (user_id, name, mastery_level)
+                            VALUES (?, ?, ?)
+                        ''', (user_id, f'已掌握知识点{len(mastered_points) + i + 1}', 2))
+                elif len(mastered_points) > mastered_count:
+                    # 需要删除多余的
+                    to_delete = mastered_points[mastered_count:]
+                    for point_id in to_delete:
+                        conn.execute('''
+                            DELETE FROM user_manual_knowledge_points WHERE id = ?
+                        ''', (point_id,))
+                
+                # 调整学习中的知识点数量
+                if len(learning_points) < learning_count:
+                    for i in range(learning_count - len(learning_points)):
+                        conn.execute('''
+                            INSERT INTO user_manual_knowledge_points (user_id, name, mastery_level)
+                            VALUES (?, ?, ?)
+                        ''', (user_id, f'学习中知识点{len(learning_points) + i + 1}', 1))
+                elif len(learning_points) > learning_count:
+                    to_delete = learning_points[learning_count:]
+                    for point_id in to_delete:
+                        conn.execute('''
+                            DELETE FROM user_manual_knowledge_points WHERE id = ?
+                        ''', (point_id,))
+                
+                # 调整待学习的知识点数量
+                if len(pending_points) < pending_count:
+                    for i in range(pending_count - len(pending_points)):
+                        conn.execute('''
+                            INSERT INTO user_manual_knowledge_points (user_id, name, mastery_level)
+                            VALUES (?, ?, ?)
+                        ''', (user_id, f'待学习知识点{len(pending_points) + i + 1}', 0))
+                elif len(pending_points) > pending_count:
+                    to_delete = pending_points[pending_count:]
+                    for point_id in to_delete:
+                        conn.execute('''
+                            DELETE FROM user_manual_knowledge_points WHERE id = ?
+                        ''', (point_id,))
+                
+                conn.commit()
+                return jsonify({'success': True, 'message': '知识点数量已更新'})
+        except Exception as e:
+            print(f"批量更新知识点失败: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
     
     # ========== 知识点学习行为记录API ==========
     
@@ -3066,11 +3250,13 @@ def create_app():
         })
     
     @app.route('/api/analytics/report')
+    @login_required
     def generate_learning_report():
         """生成学习报告"""
+        user_id = session.get('user_id', 1)
         report_type = request.args.get('type', 'full')  # full, summary, detailed
         with db_manager.get_connection() as conn:
-            from datetime import datetime
+            from datetime import datetime, timedelta
             
             # 基础统计
             total_docs = conn.execute('SELECT COUNT(*) FROM documents WHERE is_deleted = 0').fetchone()[0]
@@ -3099,26 +3285,57 @@ def create_app():
                 LIMIT 5
             ''').fetchall()
             
-            # 学习时长统计（最近7天）
-            from datetime import timedelta
+            # 学习时长统计（最近7天，基于在线时长study类型）
             study_time_data = []
+            today = datetime.now().date()
             for i in range(6, -1, -1):
-                target_date = datetime.now().date() - timedelta(days=i)
-                start_time = datetime.combine(target_date, datetime.min.time())
-                end_time = datetime.combine(target_date, datetime.max.time())
+                target_date = today - timedelta(days=i)
+                date_str = target_date.strftime('%Y-%m-%d')
                 
                 result = conn.execute('''
                     SELECT COALESCE(SUM(duration), 0) as total_duration
                     FROM user_behaviors
-                    WHERE timestamp >= ? AND timestamp < ?
-                    AND action_type IN ('view', 'read', 'study')
-                ''', (start_time.isoformat(), end_time.isoformat())).fetchone()
+                    WHERE user_id = ?
+                    AND date(timestamp) = date(?)
+                    AND action_type = 'study'
+                    AND duration IS NOT NULL
+                    AND duration > 0
+                ''', (user_id, date_str)).fetchone()
                 
                 hours = round(result['total_duration'] / 3600.0, 1) if result['total_duration'] else 0.0
                 study_time_data.append({
-                    'date': target_date.strftime('%Y-%m-%d'),
+                    'date': date_str,
                     'hours': hours
                 })
+            
+            total_study_hours = round(sum(s['hours'] for s in study_time_data), 1)
+            
+            # 知识点学习进度（用户手动管理的知识点）
+            knowledge_points_data = {
+                'mastered': [],
+                'learning': [],
+                'pending': []
+            }
+            
+            points = conn.execute('''
+                SELECT id, name, mastery_level
+                FROM user_manual_knowledge_points
+                WHERE user_id = ?
+                ORDER BY mastery_level DESC, name ASC
+            ''', (user_id,)).fetchall()
+            
+            for point in points:
+                point_info = {
+                    'id': point['id'],
+                    'name': point['name']
+                }
+                level = point['mastery_level']
+                if level == 2:  # 已掌握
+                    knowledge_points_data['mastered'].append(point_info)
+                elif level == 1:  # 学习中
+                    knowledge_points_data['learning'].append(point_info)
+                else:  # 待学习
+                    knowledge_points_data['pending'].append(point_info)
             
             # 生成报告
             report = {
@@ -3132,7 +3349,21 @@ def create_app():
                 'node_distribution': [{'type': n['node_type'], 'count': n['count']} for n in nodes_by_type],
                 'recent_documents': [{'title': d['title'], 'date': d['created_at'], 'type': d['file_type']} for d in recent_docs],
                 'study_time_week': study_time_data,
-                'total_study_hours': round(sum(s['hours'] for s in study_time_data), 1)
+                'total_study_hours': total_study_hours,
+                'knowledge_points': {
+                    'mastered': {
+                        'count': len(knowledge_points_data['mastered']),
+                        'items': knowledge_points_data['mastered']
+                    },
+                    'learning': {
+                        'count': len(knowledge_points_data['learning']),
+                        'items': knowledge_points_data['learning']
+                    },
+                    'pending': {
+                        'count': len(knowledge_points_data['pending']),
+                        'items': knowledge_points_data['pending']
+                    }
+                }
             }
         
         return jsonify({
